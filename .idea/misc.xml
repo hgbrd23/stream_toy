@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="Black">
+    <option name="sdkName" value="Remote Python 3.11.2 (sftp://sebastian@rpi-keyboard:22/home/sebastian/StreamDockKeyboard/.venv//bin/python)" />
+  </component>
+  <component name="NodePackageJsonFileManager">
+    <packageJsonPaths />
+  </component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.11.2 (sftp://sebastian@rpi-keyboard:22/home/sebastian/StreamDockKeyboard/.venv/bin/python)" project-jdk-type="Python SDK" />
+</project>

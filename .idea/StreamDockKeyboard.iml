@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="PYTHON_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/StreamDock-Device-SDK/Python-Linux-SDK/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/StreamDock-Device-SDK/CPP-SDK" />
+      <excludeFolder url="file://$MODULE_DIR$/StreamDock-Device-SDK/Python-Mac_ARM64-SDK" />
+      <excludeFolder url="file://$MODULE_DIR$/StreamDock-Device-SDK/WebSocket-Windows-SDK" />
+    </content>
+    <orderEntry type="jdk" jdkName="Remote Python 3.11.2 (sftp://sebastian@rpi-keyboard:22/home/sebastian/StreamDockKeyboard/.venv/bin/python)" jdkType="Python SDK" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+  <component name="PackageRequirementsSettings">
+    <option name="requirementsPath" value="C:\Projects\python\StreamDockKeyboard\requirements.txt" />
+  </component>
+</module>

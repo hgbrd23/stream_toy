@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="3d33c423-b1bc-4735-b189-b12e3659f71c" name="sebastian@rpi-keyboard:22 agent">
+        <fileTransfer accessType="SFTP" host="rpi-keyboard" port="22" sshConfigId="64300750-08fd-4c2f-8fe5-5b953fa7274d" sshConfig="sebastian@rpi-keyboard:22 agent" authAgent="true" />
+      </webServer>
+    </option>
+  </component>
+</project>
