@@ -1,0 +1,3 @@
+# Minimal dependencies to run the emulator on Windows (no USB/HID libs required)
+pillow
+PySide6

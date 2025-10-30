@@ -4,13 +4,57 @@ This document captures practical, project‑specific knowledge to help advanced 
 
 # Project Overview
 The goal of this project is to create a UI for a standalone childrens toy.
-The hardware used is a StreamDock keyboard connected to a Raspberry Pi nano 2.
+The hardware used is a StreamDock keyboard connected to a Raspberry Pi zero 2 W.
 
 The StreamDock is a USB device normally used by content streamers. The model is MiraBox HSV 293. It has a total of 15 
 buttons in 3 rows and 5 columns. Behind the buttons is a TFT display that can be controlled as one screen or 15 
 individual buttons.
 
 Button presses can be detected.
+
+## Architecture
+There is a library called StreamToy in the subdirectory /stream_toy. It provides common functionality for modules
+that are stored in /stream_toy_modules.
+Each StreamToy module can provide a unique game that can be played using the buttons and their displays. The modules are 
+loaded and executed by the StreamToy library.
+
+## StreamToy library
+The library provides several layers of functionality:
+### Runtime management
+* Device initialisation
+* Loading of all modules from stream_modules
+* Displaying menus and settings, which are each a scene.
+### Base Scene
+An abstract base scene providing functionality to be inherited in other scenes.
+
+It provides the following functionality:
+* Receiving input events.
+* Can call the runtime to switch to another scene by giving its class name.
+* A main async method that runs while the scene is active. It can async poll for input events.
+* Methods and properties for setting button tiles or a whole screen tile. The tiles can be set either as a PNG, SVG 
+  or text. For text a fixed font is used with a default size that can be customized when setting the text.
+
+### Menu Scene
+An abstract scene representing a menu. A menu is used by the user to activate other functionality like executing 
+actions or navigating to other scenes.
+
+Each button can be configured to execute actions either on tap or long press. Long press means 3 seconds.
+
+### Module Launch Scene
+This inherits the menu scene. It is the start scene when running the app. It shows a list of all modules, one per button, each with 
+a module icon loaded from the stream_module. Long-pressing the bottom right of button is reserved for system 
+functionality.
+
+### Input management
+Input events should be queued until received by a scene.
+
+## StreamToy modules
+Each module implements a unique game. This can be for example a memory game, quick reaction game, playing audio books 
+etc.
+Properties of a module:
+* Has a manifest python file that is read to get the module name and icon
+* A main scene that is executed when opening the module from the module launch scene.
+* When long/pressing the bottom right button the user returns to the module launch scene.
 
 # 1) Build and Configuration
 
@@ -74,6 +118,21 @@ Button presses can be detected.
   ```bash
   python -m unittest discover -s tests -p "test_*.py" -v
   ```
+
+### Emulator test (GUI visible) — Windows friendly
+- The repository includes a pure‑Python Stream Dock emulator with a small PySide6 (Qt) GUI.
+- The test `tests/test_emulator_screenshot.py` imports `main.run_demo()` directly, runs with the emulator, shows the GUI during the test, and writes a screenshot to `tests/artifacts/emulator_screenshot.png`.
+- Artifacts directory: `tests/artifacts/` (ignored by git).
+
+### Windows emulator venv (.venv-emulator)
+- Create and use a minimal venv for emulator work on Windows (no USB libs needed):
+  ```powershell
+  # From project root
+  .\scripts\setup-emulator-venv.ps1
+  # Later, to activate:
+  . .\.venv-emulator\Scripts\Activate.ps1
+  ```
+- This installs `requirements-emulator.txt` (Pillow only). Use it to run emulator and tests without Linux HID deps.
 
 ### Writing new tests
 - Create test files under `tests/` named `test_*.py`.
