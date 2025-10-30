@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+.venv-emulator/
+
+# Test artifacts
+/tests/artifacts/
+/tests/artifacts/**
+
+# OS junk
+.DS_Store
+Thumbs.db
