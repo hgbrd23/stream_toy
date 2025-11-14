@@ -1,133 +1,126 @@
+#!/usr/bin/env python3
+"""
+StreamToy - Main Entry Point
+
+A modular game/app framework for StreamDock devices.
+Supports both physical hardware and web-based emulation.
+"""
+
+import argparse
+import logging
 import os
-import threading
-import time
-from typing import Optional
-
-print("Hello World")
+import sys
+from stream_toy.runtime import StreamToyRuntime
 
 
-def run_demo(
-        use_emulator: bool = False,
-        show_gui: bool = True,
-        screenshot_path: Optional[str] = None,
-        visible_delay_seconds: Optional[float] = None,
-    ):
+def setup_logging(level: str) -> None:
     """
-    Run the demo programmatically. Returns after rendering when using the emulator.
-    - use_emulator: run against the built-in emulator instead of USB device
-    - show_gui: when using emulator, show GUI window (Tk) if True
-    - screenshot_path: when using emulator, path to save a screenshot image
-    - visible_delay_seconds: when using emulator, how long to keep the GUI open before closing.
-      If None, reads env var STREAMDOCK_EMULATOR_VISIBLE_DELAY; falls back to 0.2s (fast for tests).
+    Configure logging.
+
+    Args:
+        level: Log level (DEBUG, INFO, WARNING, ERROR)
     """
-    # Fix for Segmentation Fault when access rights to USB port not available.
-    # Only attempt on Linux and when not using the emulator.
-    if not use_emulator and os.name != "nt":
-        os.system('sudo chown root:$USER /dev/bus/usb/001/00*')
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    logging.basicConfig(
+        level=getattr(logging, level.upper()),
+        format=log_format,
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
-    # Propagate emulator configuration via environment, as emulator reads env
-    if use_emulator:
-        os.environ["STREAMDOCK_USE_EMULATOR"] = "1"
-        os.environ["STREAMDOCK_EMULATOR_HEADLESS"] = "0" if show_gui else "1"
-        if screenshot_path:
-            os.environ["STREAMDOCK_EMULATOR_SCREENSHOT"] = screenshot_path
 
-    # Import chosen backend lazily here to honor use_emulator flag
-    if use_emulator:
-        from stream_dock_emulator import DeviceManager as _DeviceManager, StreamDockN1 as _StreamDockN1
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='StreamToy - Interactive game framework for StreamDock devices',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                          # Run with both hardware and web emulator
+  %(prog)s --no-hardware            # Web emulator only
+  %(prog)s --no-web                 # Hardware only
+  %(prog)s --web-port 8080          # Use custom web port
+  %(prog)s --log-level DEBUG        # Enable debug logging
+        """
+    )
+
+    parser.add_argument(
+        '--no-hardware',
+        action='store_true',
+        help='Disable real StreamDock hardware device'
+    )
+
+    parser.add_argument(
+        '--no-web',
+        action='store_true',
+        help='Disable web browser emulator'
+    )
+
+    parser.add_argument(
+        '--web-port',
+        type=int,
+        default=5000,
+        help='Web emulator port (default: 5000)'
+    )
+
+    parser.add_argument(
+        '--log-level',
+        default='INFO',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        help='Logging level (default: INFO)'
+    )
+
+    args = parser.parse_args()
+
+    # Setup logging
+    setup_logging(args.log_level)
+    logger = logging.getLogger(__name__)
+
+    # Validate arguments
+    if args.no_hardware and args.no_web:
+        logger.error("Cannot disable both hardware and web emulator!")
+        sys.exit(1)
+
+    # Print banner
+    print("=" * 60)
+    print("  StreamToy - Interactive Game Framework")
+    print("  Version 1.0.0")
+    print("=" * 60)
+    print()
+
+    if not args.no_hardware:
+        print("✓ Hardware device: ENABLED")
     else:
-        from StreamDock.DeviceManager import DeviceManager as _DeviceManager
-        from StreamDock.Devices.StreamDockN1 import StreamDockN1 as _StreamDockN1
+        print("✗ Hardware device: DISABLED")
 
-    manner = _DeviceManager()
-    streamdocks = manner.enumerate()
+    if not args.no_web:
+        print(f"✓ Web emulator: ENABLED (http://0.0.0.0:{args.web_port})")
+    else:
+        print("✗ Web emulator: DISABLED")
 
-    # listen plug/unplug (background)
-    listen_thread = threading.Thread(target=manner.listen)
-    listen_thread.daemon = True
-    listen_thread.start()
+    print()
+    print("Press Ctrl+C to exit")
+    print("=" * 60)
+    print()
 
-    print("Found {} Stream Dock(s).".format(len(streamdocks)))
-    read_threads = []
-    for device in streamdocks:
-        print("Opening")
-        # open device
-        device.open()
-        print("Init")
-        device.init()
-        device.set_brightness(10)
-        print("Thread")
-        # new thread to get device's feedback
-        t = threading.Thread(target=device.whileread)
-        t.daemon = True
-        t.start()
-        read_threads.append(t)
-        # set background image
-        print("set background image")
-        # Optional: set full-screen background in emulator via env var
-        if use_emulator:
-            bg_path = os.getenv("STREAMDOCK_EMULATOR_BG")
-            if bg_path and hasattr(device, "set_touchscreen_image"):
-                try:
-                    device.set_touchscreen_image(bg_path)
-                    device.refresh()
-                except Exception:
-                    pass
-        # Resolve assets directory relative to this file to be robust to CWD
-        assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "img", "memory", "set_01")
-        for i in range(1, 16):
-            img_path = os.path.join(assets_dir, "animal_{:02d}.png".format(i % 9 + 1))
-            device.set_key_image(i, img_path)
-            device.refresh()
-        # Give some time for any async rendering
-        time.sleep(0.2 if use_emulator else 2)
-        # N1 switch mode
-        if isinstance(device, _StreamDockN1):
-            device.switch_mode(0)
+    # Create and start runtime
+    try:
+        runtime = StreamToyRuntime(
+            enable_hardware=not args.no_hardware,
+            enable_web=not args.no_web,
+            web_port=args.web_port
+        )
 
-    # In emulator mode, optionally keep the GUI visible before shutting down
-    if use_emulator:
-        # Determine how long to keep the window visible
-        delay = 0.2
-        if visible_delay_seconds is not None:
-            try:
-                delay = float(visible_delay_seconds)
-            except Exception:
-                delay = 0.2
-        else:
-            env_delay = os.getenv("STREAMDOCK_EMULATOR_VISIBLE_DELAY")
-            if env_delay:
-                try:
-                    delay = float(env_delay)
-                except Exception:
-                    delay = 0.2
-        # If emulator device provides a blocking GUI show, use it on the main thread
-        try:
-            for device in streamdocks:
-                wait_visible = getattr(device, "wait_visible", None)
-                if callable(wait_visible):
-                    wait_visible(max(0.0, delay))
-                else:
-                    time.sleep(max(0.0, delay))
-        except Exception:
-            time.sleep(max(0.0, delay))
-        # Attempt to close devices to stop threads if supported
-        try:
-            for device in streamdocks:
-                close = getattr(device, "close", None)
-                if callable(close):
-                    close()
-        except Exception:
-            pass
-        return
+        logger.info("Starting StreamToy Runtime...")
+        runtime.start()
 
-    # On real hardware, keep the app running
-    time.sleep(10000)
+    except KeyboardInterrupt:
+        print("\n\nShutdown requested by user")
+        logger.info("Keyboard interrupt received")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        print(f"\nERROR: {e}")
+        sys.exit(1)
 
 
-if __name__ == "__main__":
-    # Determine options from environment for CLI usage
-    use_emul = os.getenv("STREAMDOCK_USE_EMULATOR", "0") == "1"
-    show_gui = os.getenv("STREAMDOCK_EMULATOR_HEADLESS", "0") != "1"
-    screenshot = os.getenv("STREAMDOCK_EMULATOR_SCREENSHOT")
-    run_demo(use_emulator=use_emul, show_gui=show_gui, screenshot_path=screenshot)
+if __name__ == '__main__':
+    main()

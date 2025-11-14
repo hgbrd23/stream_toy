@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="sebastian@rpi-keyboard:22 agent (2)" useTempFile="true" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="sebastian@rpi-keyboard:22 agent" useTempFile="true" remoteFilesAllowedToDisappearOnAutoupload="false" showNewOnTargetInSync="false">
     <serverData>
       <paths name="root@192.168.7.202:22322 agent">
         <serverdata>
@@ -35,6 +35,9 @@
           <mappings>
             <mapping deploy="/home/sebastian/StreamDockKeyboard" local="$PROJECT_DIR$" />
           </mappings>
+          <excludedPaths>
+            <excludedPath local="true" path="$PROJECT_DIR$/.venv-emulator" />
+          </excludedPaths>
         </serverdata>
       </paths>
     </serverData>

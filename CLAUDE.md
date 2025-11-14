@@ -1,13 +1,16 @@
 # StreamDockKeyboard – Project Guidelines
-This document captures practical, project‑specific knowledge to help advanced developers build, test, and extend this repository quickly and safely.
+This document captures practical, project‑specific knowledge to help advanced developers build, test, and extend this 
+repository quickly and safely.
 
 # Project Overview
 The goal of this project is to create a UI for a standalone childrens toy.
-The hardware used is a StreamDock keyboard connected to a Raspberry Pi zero 2 W.
+The hardware used is a Raspberry Pi zero 2 W.
 
-The StreamDock is a USB device normally used by content streamers. The model is MiraBox HSV 293S / StreamDock 293S. It has a total of 15 
-buttons in 3 rows and 5 columns. Behind the buttons is a TFT display that can be controlled as one screen or 15 
-individual buttons.
+# StreamDock
+The SteamDock is connected to the Raspberry PI via USB.  
+The StreamDock is a USB device normally used by content streamers. The model is MiraBox HSV 293V3 / StreamDock 293V3. 
+It has a total of 15 buttons in 3 rows and 5 columns. Behind the buttons is a TFT display that can be controlled as one 
+screen or 15 individual buttons.
 
 This model uses the class StreamDock293V3.
 
@@ -16,23 +19,82 @@ Buttons start at 0,4. Gap between buttons is 40x42.
 
 Button presses can be detected, even while the device is refreshing.
 
-Refreshing the background image is quite slow. Takes between 500ms to ~secs. The device sometimes crashes
-if too many commands are sent. Best is to wait after device.refresh() for a callback with this data:  
-`(b'ACK\x00\x00OK\x00\x00\x00\x00\x00\x00', 'ACK', 'OK', 0, 0)`
+## Device Refresh Behavior
 
+**Individual Button Tiles (128x128):**
+- Fast updates, typically < 100ms per tile
+- Multiple tiles can be updated without waiting for ACK
+- Just call `device.refresh()` after `set_key_image()` - no need to wait
+- The device handles these asynchronously
+
+**Full Screen Background Image (800x480):**
+- Very slow updates, takes 500ms to 3+ seconds
+- Device can crash if too many commands are sent during background refresh
+- MUST wait for ACK callback after `device.refresh()` with this data:
+  `(b'ACK\x00\x00OK\x00\x00\x00\x00\x00\x00', 'ACK', 'OK', 0, 0)`
+- ACK is indicated by bytes[3] and bytes[4] both being 0
+
+**Best Practice:**
+- Use individual button tiles for UI updates (fast, responsive)
+- Avoid full screen background images if possible - use tiles instead
+- Only use background images for static content that rarely changes
+
+# Neopixel LEDs
+Neopixel WS2812b (eco) LEDs are connected to GPIO 10 of the RPI.
+
+They are laid out around the StreamDock keyboard in this configuration as one string in this order:
+
+14 LEDs: back left
+17 LEDs: left
+28 LEDs: front
+17 LEDs: right
+14 LEDs: back right
+
+Effects can be sent to this strip using the neopixel and adafruit_led_animation libs.
 
 ## Architecture
 There is a library called StreamToy in the subdirectory /stream_toy. It provides common functionality for modules
-that are stored in /stream_toy_modules.
-Each StreamToy module can provide a unique game that can be played using the buttons and their displays. The modules are 
+that are stored in /stream_toy_apps.
+Each StreamToy app can provide a unique game that can be played using the buttons and their displays. The modules are 
 loaded and executed by the StreamToy library.
 
 ## StreamToy library
 The library provides several layers of functionality:
+
+### Device abstraction
+The StreamToy library provides different UIs as "devices". One will be an "emulated" device that is accessible via web 
+browser.
+
+There is an abstract base class StreamToyDevice for this case. The class provides the following fucntionality:
+* set_tile(): Receives a tile image as PIL image. Stores it to send it to the device.
+* submit(): Sends all queued tile changes to the device. Should block until the changes are accepted and processed by 
+  the device.
+* register_key_callback(): Allows registering a callback for key presses and releases.
+* A background thread for LED animations
+* set_background_led_animation: Submits an LED animation that runs when no other animation is active.
+* run_led_animation(animation object, duration): Runs the given LED animation. The background animation is paused and 
+  continues after this animation ended. When no duration is given, the animation runs for one cycle. 
+
+Child classes:
+* One class StreamDock293V3Device for the real device.
+* Another one WebDevice for the emulator web device.
+* Both can be disabled using he command line. By default both are enabled.
+
+#### WebDevice
+Use the data of the StreakDock like background size, button tiles and the information of LEDs around it to emulate
+the real device in a web browser.
+
+The WebDevice proves a webserver with realtime functionality to send updates for button tiles and LEDs to the web 
+browser and receive button events. 
+
+It contains a fake neopixel class that can be used by adafruit_led_animation. Instead of sending the LED data to a
+GPIO, it sends them to the web browser.
+
 ### Runtime management
 * Device initialisation
 * Loading of all modules from stream_modules
 * Displaying menus and settings, which are each a scene.
+
 ### Base Scene
 An abstract base scene providing functionality to be inherited in other scenes.
 
@@ -71,10 +133,11 @@ Properties of a module:
 - Target Python 3.10+ (3.11 also fine). The SDK code is pure Python but depends on native HID/USB libraries at runtime.
 
 ### Virtual environment and dependencies
+#### Real device
 - Create a venv and install Python deps:
   ```bash
   python -m venv .venv
-  . .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
+  . .venv/bin/activate
   pip install -U pip wheel
   pip install -r requirements.txt
   ```
@@ -83,6 +146,9 @@ Properties of a module:
   pip install pillow
   ```
   `split_image.py` uses Pillow, but it is not required to run the HID device demo in `main.py`.
+
+#### WebDevice
+Use the venv in .venv-emulator with requirements-emulator.
 
 ### Native system libraries (Linux)
 - `readme.md` documents the baseline system packages:
@@ -95,9 +161,6 @@ Properties of a module:
   ```
   This is only a stop‑gap. Prefer a udev rule for the StreamDock VID/PID allowing your user group to access the device without sudo. Document the rule when VID/PID are finalized.
 
-### Windows and macOS notes
-- This repo vendors a Linux and a macOS ARM64 SDK. The Python demo (`main.py`) is Linux‑oriented and relies on `pyudev` and `hidapi/libusb` stack. On Windows, HID transport will require the proper backend (HIDAPI/WinUSB). The Windows SDK variant isn’t currently wired in `main.py`.
-- If you need cross‑platform support, introduce a transport selection layer that chooses the correct backend per OS and conditionally installs platform packages.
 
 ### Python import path for the SDK
 - The code imports from `StreamDock` directly:
@@ -128,20 +191,8 @@ Properties of a module:
   python -m unittest discover -s tests -p "test_*.py" -v
   ```
 
-### Emulator test (GUI visible) — Windows friendly
-- The repository includes a pure‑Python Stream Dock emulator with a small PySide6 (Qt) GUI.
-- The test `tests/test_emulator_screenshot.py` imports `main.run_demo()` directly, runs with the emulator, shows the GUI during the test, and writes a screenshot to `tests/artifacts/emulator_screenshot.png`.
-- Artifacts directory: `tests/artifacts/` (ignored by git).
-
-### Windows emulator venv (.venv-emulator)
-- Create and use a minimal venv for emulator work on Windows (no USB libs needed):
-  ```powershell
-  # From project root
-  .\scripts\setup-emulator-venv.ps1
-  # Later, to activate:
-  . .\.venv-emulator\Scripts\Activate.ps1
-  ```
-- This installs `requirements-emulator.txt` (Pillow only). Use it to run emulator and tests without Linux HID deps.
+### Emulator test 
+- The repository includes a pure‑Python Stream Dock emulator with a web interface.
 
 ### Writing new tests
 - Create test files under `tests/` named `test_*.py`.
@@ -152,18 +203,6 @@ Properties of a module:
   - Abstract I/O behind a small interface (e.g., a `Transport` with `send/recv`), then inject a fake for tests.
   - Provide environment flags to skip hardware tests by default, e.g. `@unittest.skipUnless(os.getenv("HW_TESTS") == "1", "requires hardware")`.
 
-### Example test (validated during this change)
-- A simple, safe test was temporarily created and executed to demonstrate setup:
-  - Location: `tests/test_sanity.py`
-  - Content: verified that `readme.md` contains the "System Requirements" header and `main.py` contains the `print("Hello World")` literal.
-  - Execution proof:
-    ```text
-    test_main_prints_hello_world_literal ... ok
-    test_readme_has_system_requirements_section ... ok
-    Ran 2 tests in 0.001s
-    OK
-    ```
-  - Cleanup: The file was deleted after validation to avoid polluting the repo with scaffolding.
 
 ## 3) Running the demo app
 
@@ -176,11 +215,6 @@ Properties of a module:
 - Behavior notes:
   - `main.py` currently executes a broad `chown` against `/dev/bus/usb/001/00*`. This is fragile and not portable. Replace with udev rules for production.
   - The script enumerates devices, opens each, sets brightness, starts a background read thread, and populates key images from `img/memory/set_01/animal_XX.png`. It will sleep for a long period (`time.sleep(10000)`) at the end.
-  
-
-## 4) Image assets and helpers
-- `split_image.py` demonstrates cropping a sprite sheet into button images. It assumes a specific asset at `img/memory/SSP_Memory_game_Farm_Animals-4.jpg` and writes PNG tiles into `img/memory/`.
-- The UI keys are set to 64×64 in comments; adjust cropping/resizing accordingly to the device’s native key resolution. Prefer `Image.LANCZOS` for downscaling.
 
 ## 5) Code style and contribution notes
 - Match the existing Python style (PEP‑8-ish with pragmatic line lengths).

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamToy Emulator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            padding: 20px;
+        }
+
+        #container {
+            position: relative;
+            background: #000;
+            border-radius: 30px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        #header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        #header h1 {
+            font-size: 24px;
+            color: #00d9ff;
+            margin-bottom: 5px;
+        }
+
+        #header p {
+            font-size: 14px;
+            color: #888;
+        }
+
+        #device-container {
+            position: relative;
+            display: inline-block;
+            padding: 30px;
+            background: #1a1a1a;
+            border-radius: 20px;
+        }
+
+        #streamdock-wrapper {
+            position: relative;
+            width: 810px;  /* 800 + 10px for borders */
+            height: 490px; /* 480 + 10px for borders */
+            margin: 0 auto;
+            border: 5px solid #333;
+            border-radius: 15px;
+            overflow: visible;
+            background: #000;
+            box-sizing: border-box;
+        }
+
+        #streamdock {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: default;
+        }
+
+        #button-overlays {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .button-overlay {
+            position: absolute;
+            width: 128px;
+            height: 128px;
+            cursor: pointer;
+            pointer-events: all;
+            border: 2px solid transparent;
+            border-radius: 8px;
+            transition: all 0.1s;
+            background: rgba(255, 255, 255, 0.0);
+        }
+
+        .button-overlay:hover {
+            border-color: rgba(0, 217, 255, 0.5);
+            background: rgba(0, 217, 255, 0.1);
+        }
+
+        .button-overlay:active {
+            border-color: rgba(0, 217, 255, 1);
+            background: rgba(0, 217, 255, 0.2);
+            transform: scale(0.95);
+        }
+
+        .led-strip-container {
+            position: absolute;
+            display: flex;
+            gap: 3px;
+        }
+
+        /* Back left LEDs - top left corner */
+        #led-back-left {
+            top: -20px;
+            left: -20px;
+            flex-direction: row;
+        }
+
+        /* Left LEDs - left side vertical */
+        #led-left {
+            top: 50%;
+            left: -20px;
+            transform: translateY(-50%);
+            flex-direction: column;
+        }
+
+        /* Front LEDs - bottom horizontal */
+        #led-front {
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            flex-direction: row;
+        }
+
+        /* Right LEDs - right side vertical */
+        #led-right {
+            top: 50%;
+            right: -20px;
+            transform: translateY(-50%);
+            flex-direction: column;
+        }
+
+        /* Back right LEDs - top right corner */
+        #led-back-right {
+            top: -20px;
+            right: -20px;
+            flex-direction: row;
+        }
+
+        .led {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #222;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+            transition: background 0.1s, box-shadow 0.1s;
+        }
+
+        .led.active {
+            box-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+        }
+
+        #status {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #888;
+        }
+
+        #status.connected {
+            color: #00ff88;
+        }
+
+        #status.disconnected {
+            color: #ff4444;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="header">
+            <h1>StreamToy Emulator</h1>
+            <p>Click buttons to interact with the device</p>
+        </div>
+
+        <div id="device-container">
+            <!-- LED strips positioned around the keyboard -->
+            <div id="led-back-left" class="led-strip-container"></div>
+            <div id="led-left" class="led-strip-container"></div>
+            <div id="led-front" class="led-strip-container"></div>
+            <div id="led-right" class="led-strip-container"></div>
+            <div id="led-back-right" class="led-strip-container"></div>
+
+            <!-- StreamDock display and buttons -->
+            <div id="streamdock-wrapper">
+                <canvas id="streamdock" width="800" height="480"></canvas>
+                <div id="button-overlays"></div>
+            </div>
+        </div>
+
+        <div id="status" class="disconnected">Connecting...</div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        // StreamDock configuration
+        const TILE_SIZE = 128;
+        const TILE_GAP_X = 40;
+        const TILE_GAP_Y = 42;
+        const TILE_START_X = 0;
+        const TILE_START_Y = 4;
+        const COLS = 5;
+        const ROWS = 3;
+
+        // Canvas setup
+        const canvas = document.getElementById('streamdock');
+        const ctx = canvas.getContext('2d');
+
+        // Clear canvas to black
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Socket.IO connection
+        const socket = io();
+
+        // Status indicator
+        const statusEl = document.getElementById('status');
+
+        socket.on('connect', () => {
+            console.log('Connected to StreamToy server');
+            statusEl.textContent = 'Connected';
+            statusEl.className = 'connected';
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from StreamToy server');
+            statusEl.textContent = 'Disconnected';
+            statusEl.className = 'disconnected';
+        });
+
+        // Initialize LEDs
+        const ledSegments = {
+            'back-left': 14,
+            'left': 17,
+            'front': 28,
+            'right': 17,
+            'back-right': 14
+        };
+
+        const ledElements = [];
+
+        Object.entries(ledSegments).forEach(([name, count]) => {
+            const container = document.getElementById(`led-${name}`);
+            for (let i = 0; i < count; i++) {
+                const led = document.createElement('div');
+                led.className = 'led';
+                container.appendChild(led);
+                ledElements.push(led);
+            }
+        });
+
+        // Initialize button overlays
+        const overlayContainer = document.getElementById('button-overlays');
+
+        for (let row = 0; row < ROWS; row++) {
+            for (let col = 0; col < COLS; col++) {
+                const x = TILE_START_X + col * (TILE_SIZE + TILE_GAP_X);
+                const y = TILE_START_Y + row * (TILE_SIZE + TILE_GAP_Y);
+
+                const overlay = document.createElement('div');
+                overlay.className = 'button-overlay';
+                overlay.style.left = `${x}px`;
+                overlay.style.top = `${y}px`;
+                overlay.dataset.row = row;
+                overlay.dataset.col = col;
+
+                overlay.addEventListener('mousedown', () => {
+                    console.log(`Button press: (${row}, ${col})`);
+                    socket.emit('button_press', { row, col });
+                });
+
+                overlay.addEventListener('mouseup', () => {
+                    console.log(`Button release: (${row}, ${col})`);
+                    socket.emit('button_release', { row, col });
+                });
+
+                // Also handle mouse leaving while pressed
+                overlay.addEventListener('mouseleave', (e) => {
+                    if (e.buttons === 1) { // Left button pressed
+                        console.log(`Button release (leave): (${row}, ${col})`);
+                        socket.emit('button_release', { row, col });
+                    }
+                });
+
+                overlayContainer.appendChild(overlay);
+            }
+        }
+
+        // Handle tile updates
+        socket.on('tile_update', (data) => {
+            const { row, col, image } = data;
+            console.log(`Tile update: (${row}, ${col})`);
+
+            const img = new Image();
+            img.onload = () => {
+                const x = TILE_START_X + col * (TILE_SIZE + TILE_GAP_X);
+                const y = TILE_START_Y + row * (TILE_SIZE + TILE_GAP_Y);
+                ctx.drawImage(img, x, y, TILE_SIZE, TILE_SIZE);
+            };
+            img.onerror = () => {
+                console.error(`Failed to load image for tile (${row}, ${col})`);
+            };
+            img.src = 'data:image/png;base64,' + image;
+        });
+
+        // Handle LED updates
+        socket.on('led_update', (data) => {
+            const { leds } = data;
+
+            leds.forEach((rgb, idx) => {
+                if (idx < ledElements.length) {
+                    const led = ledElements[idx];
+                    const [r, g, b] = rgb;
+                    const color = `rgb(${r}, ${g}, ${b})`;
+                    led.style.backgroundColor = color;
+
+                    // Add glow effect if LED is on
+                    if (r > 10 || g > 10 || b > 10) {
+                        led.style.boxShadow = `0 0 10px ${color}, 0 0 20px ${color}`;
+                    } else {
+                        led.style.boxShadow = '0 0 5px rgba(0, 0, 0, 0.5)';
+                    }
+                }
+            });
+        });
+
+        console.log('StreamToy Emulator initialized');
+    </script>
+</body>
+</html>
