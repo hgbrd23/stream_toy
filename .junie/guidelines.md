@@ -1,16 +1,25 @@
 # StreamDockKeyboard – Project Guidelines
-
 This document captures practical, project‑specific knowledge to help advanced developers build, test, and extend this repository quickly and safely.
 
 # Project Overview
 The goal of this project is to create a UI for a standalone childrens toy.
 The hardware used is a StreamDock keyboard connected to a Raspberry Pi zero 2 W.
 
-The StreamDock is a USB device normally used by content streamers. The model is MiraBox HSV 293. It has a total of 15 
+The StreamDock is a USB device normally used by content streamers. The model is MiraBox HSV 293S / StreamDock 293S. It has a total of 15 
 buttons in 3 rows and 5 columns. Behind the buttons is a TFT display that can be controlled as one screen or 15 
 individual buttons.
 
-Button presses can be detected.
+This model uses the class StreamDock293V3.
+
+The background image has dimensions of 800 * 480. The tile image for buttons is 128x128.
+Buttons start at 0,4. Gap between buttons is 40x42.
+
+Button presses can be detected, even while the device is refreshing.
+
+Refreshing the background image is quite slow. Takes between 500ms to ~secs. The device sometimes crashes
+if too many commands are sent. Best is to wait after device.refresh() for a callback with this data:  
+`(b'ACK\x00\x00OK\x00\x00\x00\x00\x00\x00', 'ACK', 'OK', 0, 0)`
+
 
 ## Architecture
 There is a library called StreamToy in the subdirectory /stream_toy. It provides common functionality for modules
@@ -162,12 +171,12 @@ Properties of a module:
 - On Linux, install the native libs and address permissions as described earlier.
 - Then run:
   ```bash
-  python main.py
+  python demo.py
   ```
 - Behavior notes:
   - `main.py` currently executes a broad `chown` against `/dev/bus/usb/001/00*`. This is fragile and not portable. Replace with udev rules for production.
   - The script enumerates devices, opens each, sets brightness, starts a background read thread, and populates key images from `img/memory/set_01/animal_XX.png`. It will sleep for a long period (`time.sleep(10000)`) at the end.
-  - For `StreamDockN1`, it switches mode 0 if detected.
+  
 
 ## 4) Image assets and helpers
 - `split_image.py` demonstrates cropping a sprite sheet into button images. It assumes a specific asset at `img/memory/SSP_Memory_game_Farm_Animals-4.jpg` and writes PNG tiles into `img/memory/`.
@@ -178,4 +187,6 @@ Properties of a module:
 - Keep imports absolute.
 - Avoid side effects at import time; device opening should happen under `if __name__ == "__main__":`.
 - Encapsulate device operations behind interfaces to enable mocking and cross‑platform support.
-- When touching SDK code under `StreamDock-Device-SDK/...`, prefer upstreaming changes to the SDK repository rather than diverging here.
+- Do not touch SDK code under `StreamDock-Device-SDK/...`
+- Don't add ENV/configuration unless explicitly asked.
+- Don't reimplement stuff that is in the libraries.

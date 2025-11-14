@@ -1,3 +1,8 @@
-# Minimal dependencies to run the emulator on Windows (no USB/HID libs required)
-pillow
-PySide6
+# Web emulator dependencies
+Pillow>=10.0
+flask>=2.3
+flask-socketio>=5.3
+python-socketio>=5.9
+
+# Optional: SVG rendering
+# cairosvg>=2.7

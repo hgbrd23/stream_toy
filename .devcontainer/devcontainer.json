@@ -1,0 +1,44 @@
+{
+  "name": "Claude Code Python Development",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+
+  "mounts": [
+  ],
+
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/workspace/.claude-profile"
+  },
+
+  "customizations": {
+    "jetbrains": {
+      "backend": "PyCharm",
+      "plugins": [
+        "com.intellij.clion",
+        "Docker"
+      ]
+    }
+  },
+
+  "postCreateCommand": "sudo npm install -g @anthropic-ai/claude-code",
+  "remoteUser": "developer",
+
+  "forwardPorts": [5000],
+  "portsAttributes": {
+    "5000": {
+      "label": "StreamToy Emulator",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  }
+}
