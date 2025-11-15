@@ -33,17 +33,13 @@ class MemoryGameScene(BaseScene):
         """Initialize game."""
         logger.info("Starting Memory Game")
 
-        # Use animal images from demo if available
-        assets_dir = Path(__file__).parent / "assets" / "images"
-        demo_assets = Path(__file__).parent.parent.parent / "img" / "memory" / "set_01"
+        # Load tile images from module assets
+        # Use tile_set_01 by default, can be made configurable later
+        assets_dir = Path(__file__).parent / "assets" / "tiles" / "tile_set_01"
 
-        # Try to find card images
-        if demo_assets.exists():
-            images = list(demo_assets.glob("animal_*.png"))
-            logger.info(f"Found {len(images)} animal images in demo assets")
-        else:
-            images = list(assets_dir.glob("*.png")) if assets_dir.exists() else []
-            logger.info(f"Found {len(images)} images in module assets")
+        # Try to find tile images
+        images = list(assets_dir.glob("tile_*.png")) if assets_dir.exists() else []
+        logger.info(f"Found {len(images)} tile images in module assets")
 
         if len(images) < 7:
             logger.warning(f"Not enough card images ({len(images)}), using text cards")
@@ -51,7 +47,9 @@ class MemoryGameScene(BaseScene):
             return
 
         # Setup card pairs (7 pairs = 14 cards, 1 button for exit)
-        self.cards = self._create_card_deck(images[:7])
+        # Randomly select 7 tiles from available images
+        selected_images = random.sample(images, 7)
+        self.cards = self._create_card_deck(selected_images)
 
         # Render initial state
         await self._render_game_board()

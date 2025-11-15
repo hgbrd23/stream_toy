@@ -132,7 +132,7 @@ alsamixer
 # Quirks
 If you get a segmentation fault when opening:
 ```shell
-sudo chown root:$USER /dev/bus/usb/001/002
+sudo chown root:$USER /dev/bus/usb/001/00*
 ```
 
 # Hardware

@@ -8,7 +8,7 @@ import os
 
 def create_memory_game_icon():
     """Create icon for memory game."""
-    img = Image.new('RGB', (128, 128), '#1a1a2e')
+    img = Image.new('RGB', (112, 112), '#1a1a2e')
     draw = ImageDraw.Draw(img)
 
     # Draw question mark
@@ -21,8 +21,8 @@ def create_memory_game_icon():
     bbox = draw.textbbox((0, 0), text, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
-    x = (128 - text_width) // 2
-    y = (128 - text_height) // 2
+    x = (112 - text_width) // 2
+    y = (112 - text_height) // 2
 
     draw.text((x, y), text, fill='#00d9ff', font=font)
 
@@ -31,11 +31,11 @@ def create_memory_game_icon():
 
 def create_reaction_game_icon():
     """Create icon for reaction game."""
-    img = Image.new('RGB', (128, 128), '#1a1a2e')
+    img = Image.new('RGB', (112, 112), '#1a1a2e')
     draw = ImageDraw.Draw(img)
 
     # Draw lightning bolt  (simplified as zigzag)
-    draw.polygon([(64, 20), (70, 50), (80, 50), (60, 80), (65, 60), (50, 60)], fill='#ffff00')
+    draw.polygon([(56, 18), (61, 44), (70, 44), (53, 70), (57, 53), (44, 53)], fill='#ffff00')
 
     img.save('/workspace/stream_toy_apps/reaction_game/icon.png')
     print("Created reaction_game icon")
