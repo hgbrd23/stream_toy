@@ -14,14 +14,14 @@ screen or 15 individual buttons.
 
 This model uses the class StreamDock293V3.
 
-The background image has dimensions of 800 * 480. The tile image for buttons is 128x128.
+The background image has dimensions of 800 * 480. The tile image for buttons is 112x112.
 Buttons start at 0,4. Gap between buttons is 40x42.
 
 Button presses can be detected, even while the device is refreshing.
 
 ## Device Refresh Behavior
 
-**Individual Button Tiles (128x128):**
+**Individual Button Tiles (112x112):**
 - Fast updates, typically < 100ms per tile
 - Multiple tiles can be updated without waiting for ACK
 - Just call `device.refresh()` after `set_key_image()` - no need to wait
@@ -214,7 +214,7 @@ Use the venv in .venv-emulator with requirements-emulator.
   ```
 - Behavior notes:
   - `main.py` currently executes a broad `chown` against `/dev/bus/usb/001/00*`. This is fragile and not portable. Replace with udev rules for production.
-  - The script enumerates devices, opens each, sets brightness, starts a background read thread, and populates key images from `img/memory/set_01/animal_XX.png`. It will sleep for a long period (`time.sleep(10000)`) at the end.
+  - The script enumerates devices, opens each, sets brightness, starts a background read thread, and populates key images from `stream_toy_apps/memory_game/assets/tiles/tile_set_01/tile_XX.png`. It will sleep for a long period (`time.sleep(10000)`) at the end.
 
 ## 5) Code style and contribution notes
 - Match the existing Python style (PEP‑8-ish with pragmatic line lengths).
@@ -223,4 +223,5 @@ Use the venv in .venv-emulator with requirements-emulator.
 - Encapsulate device operations behind interfaces to enable mocking and cross‑platform support.
 - Do not touch SDK code under `StreamDock-Device-SDK/...`
 - Don't add ENV/configuration unless explicitly asked.
-- Don't reimplement stuff that is in the libraries.
+- Don't reimplement stuff that is in the libraries unless explicitly asked. If you think it would be better ask the user.
+- When improving code, don't create a new version of anything. Refactor the existing one or create a new one and remove the old one. 

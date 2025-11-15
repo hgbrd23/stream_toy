@@ -1,8 +1,10 @@
 import os
+import random
 import sys
 import threading
 import time
 import subprocess
+from pathlib import Path
 from typing import Optional, List
 import logging
 
@@ -150,13 +152,36 @@ def run_demo():
 
 
         # Resolve assets directory relative to this file to be robust to CWD
-        assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "img", "memory", "set_01")
-        for i in range(1, 16):
-            img_path = os.path.join(assets_dir, "animal_{:02d}.png".format(i % 9 + 1))
-            device.set_key_image(i, img_path)
-            device.refresh()
+        assets_dir = Path(__file__).parent / "stream_toy_apps" / "memory_game" / "assets" / "tiles" / "tile_set_01"
+        images = list(assets_dir.glob("tile_*.png")) * 2  # duplicate, so we have enough images for all keys
+        start_time = time.time()
+        for j in range(1, 100):
+            tile_start = time.time()
+            random.shuffle(images)
+            selected_images = images[:15]
+            for i, img_path in enumerate(selected_images):
+                device.set_key_image(i + 1, img_path)
+                #device.refresh()
+            tile_end = time.time()
+            tile_duration = tile_end - tile_start
+            _logger.info(f"[demo] set all key images {i + 1} took {tile_duration:.3f}s")
+        end_time = time.time()
+        duration = end_time - start_time
+        _logger.info(f"[demo] set key images took {duration:.3f}s ({j / duration:.1f} FPS)")
         # Give some time for any async rendering
         time.sleep(2)
+        start_time = time.time()
+        for i in range(1, 100):
+            tile_start = time.time()
+            img_path = os.path.join(assets_dir, "tile_{:02d}.png".format(i % 9 + 1))
+            device.set_key_image(1, img_path)
+            device.refresh()
+            tile_end = time.time()
+            tile_duration = tile_end - tile_start
+            _logger.info(f"[demo] set key image {i} took {tile_duration:.3f}s")
+        end_time = time.time()
+        duration = end_time - start_time
+        _logger.info(f"[demo] set key images took {duration:.3f}s ({i / duration:.1f} FPS)")
 
 
 

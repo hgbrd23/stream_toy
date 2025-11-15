@@ -5,7 +5,8 @@ Provides a unified interface for physical and emulated devices.
 """
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Tuple, Dict
+from pathlib import Path
+from typing import Callable, Optional, Tuple, Dict, Union
 from PIL import Image
 import logging
 
@@ -18,7 +19,7 @@ class StreamToyDevice(ABC):
     # Device configuration
     SCREEN_WIDTH: int = 800
     SCREEN_HEIGHT: int = 480
-    TILE_SIZE: int = 128
+    TILE_SIZE: int = 112
     TILE_COLS: int = 5
     TILE_ROWS: int = 3
     TILE_GAP_X: int = 40
@@ -39,7 +40,7 @@ class StreamToyDevice(ABC):
     def __init__(self):
         """Initialize the device."""
         self._key_callback: Optional[Callable[[int, int, bool], None]] = None
-        self._tile_queue: Dict[Tuple[int, int], Image.Image] = {}
+        self._tile_queue: Dict[Tuple[int, int], Union[Image.Image, str, Path]] = {}
         self._initialized = False
 
     @abstractmethod
@@ -58,14 +59,15 @@ class StreamToyDevice(ABC):
         pass
 
     @abstractmethod
-    def set_tile(self, row: int, col: int, image: Image.Image) -> None:
+    def set_tile(self, row: int, col: int, image: Union[Image.Image, str, Path]) -> None:
         """
         Queue a tile image update.
 
         Args:
             row: Tile row (0-2)
             col: Tile column (0-4)
-            image: PIL Image (will be resized to TILE_SIZE x TILE_SIZE)
+            image: PIL Image object or path to image file (str/Path)
+                  Will be resized to TILE_SIZE x TILE_SIZE
 
         Raises:
             ValueError: If row/col out of range

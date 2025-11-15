@@ -8,7 +8,8 @@ using Flask and Socket.IO for real-time updates.
 import threading
 import base64
 from io import BytesIO
-from typing import Optional, Dict, Tuple
+from pathlib import Path
+from typing import Optional, Dict, Tuple, Union
 from PIL import Image
 import logging
 import time
@@ -25,6 +26,9 @@ class WebDevice(StreamToyDevice):
 
     Renders device in HTML5 canvas and handles input via WebSocket.
     """
+
+    # Cache directory for button tiles (shared with hardware device)
+    CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "button_tiles"
 
     def __init__(self, host: str = '0.0.0.0', port: int = 5000):
         """
@@ -48,6 +52,93 @@ class WebDevice(StreamToyDevice):
         # LED update thread
         self._led_update_running = False
         self._led_update_thread: Optional[threading.Thread] = None
+
+        # Ensure cache directory exists
+        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _get_cache_path(self, cache_key: str) -> Path:
+        """
+        Get cache file path for a given cache key.
+
+        Args:
+            cache_key: Unique identifier for the cached tile
+
+        Returns:
+            Path to cached PNG file (web device uses PNG instead of JPEG)
+        """
+        # Sanitize cache key to make it filesystem-safe
+        safe_key = "".join(c if c.isalnum() or c in "._-" else "_" for c in cache_key)
+        # Web device uses PNG for simplicity
+        return self.CACHE_DIR / f"{safe_key}_web.png"
+
+    def has_cached_tile(self, cache_key: str) -> bool:
+        """
+        Check if a cached tile exists for the given cache key.
+
+        Args:
+            cache_key: Unique identifier for the cached tile
+
+        Returns:
+            True if cache exists, False otherwise
+        """
+        cache_path = self._get_cache_path(cache_key)
+        exists = cache_path.exists()
+        logger.debug(f"Cache check for '{cache_key}': {exists} ({cache_path})")
+        return exists
+
+    def set_tile_with_cache_key(self, row: int, col: int, image: Image.Image, cache_key: str) -> None:
+        """
+        Set a tile using a PIL Image and cache it with a cache key.
+
+        Args:
+            row: Tile row (0-2)
+            col: Tile column (0-4)
+            image: PIL Image to display and cache
+            cache_key: Unique identifier for caching this image
+
+        Raises:
+            ValueError: If row/col out of range
+        """
+        self.validate_tile_coords(row, col)
+
+        # Get cache path
+        cache_path = self._get_cache_path(cache_key)
+
+        # Resize if needed
+        if image.size != (self.TILE_SIZE, self.TILE_SIZE):
+            image = image.resize((self.TILE_SIZE, self.TILE_SIZE), Image.LANCZOS)
+
+        # Cache the image as PNG
+        image.save(cache_path, format='PNG')
+        logger.info(f"Cached tile '{cache_key}' at {cache_path}")
+
+        # Queue the cached file for display
+        self._tile_queue[(row, col)] = cache_path
+
+    def set_tile_from_cache(self, row: int, col: int, cache_key: str) -> None:
+        """
+        Set a tile using a previously cached image.
+
+        Args:
+            row: Tile row (0-2)
+            col: Tile column (0-4)
+            cache_key: Unique identifier for the cached tile
+
+        Raises:
+            ValueError: If row/col out of range or cache_key not found
+        """
+        self.validate_tile_coords(row, col)
+
+        # Get cache path
+        cache_path = self._get_cache_path(cache_key)
+
+        if not cache_path.exists():
+            raise ValueError(f"Cache key '{cache_key}' not found at {cache_path}")
+
+        logger.debug(f"Using cached tile '{cache_key}' for ({row},{col})")
+
+        # Queue the cached file for display
+        self._tile_queue[(row, col)] = cache_path
 
     def initialize(self) -> None:
         """Initialize web server in background thread."""
@@ -151,15 +242,19 @@ class WebDevice(StreamToyDevice):
 
         self._initialized = False
 
-    def set_tile(self, row: int, col: int, image: Image.Image) -> None:
-        """Queue a tile image update."""
+    def set_tile(self, row: int, col: int, image: Union[Image.Image, str, Path]) -> None:
+        """
+        Queue a tile image update.
+
+        Args:
+            row: Tile row (0-2)
+            col: Tile column (0-4)
+            image: PIL Image object or path to image file (str/Path)
+        """
         self.validate_tile_coords(row, col)
 
-        # Resize if needed
-        if image.size != (self.TILE_SIZE, self.TILE_SIZE):
-            image = image.resize((self.TILE_SIZE, self.TILE_SIZE), Image.LANCZOS)
-
-        # Store in queue
+        # Store in queue - can be either PIL Image or file path
+        # We'll process it in submit()
         self._tile_queue[(row, col)] = image
 
     def submit(self) -> None:
@@ -172,7 +267,18 @@ class WebDevice(StreamToyDevice):
 
         logger.info(f"[SUBMIT] Preparing to send {len(self._tile_queue)} tile updates to browser")
 
-        for (row, col), image in self._tile_queue.items():
+        for (row, col), image_or_path in self._tile_queue.items():
+            # Load image if it's a file path
+            if isinstance(image_or_path, (str, Path)):
+                image = Image.open(image_or_path)
+                logger.debug(f"[SUBMIT] Loaded image from path: {image_or_path}")
+            else:
+                image = image_or_path
+
+            # Resize if needed
+            if image.size != (self.TILE_SIZE, self.TILE_SIZE):
+                image = image.resize((self.TILE_SIZE, self.TILE_SIZE), Image.LANCZOS)
+
             # Convert image to base64 PNG
             buffered = BytesIO()
             image.save(buffered, format="PNG")

@@ -9,7 +9,7 @@ This document outlines the comprehensive implementation plan for the StreamToyKe
 - `demo.py`: Basic StreamDock 293V3 device demo showing key image updates
 - `led_test.py`: Neopixel LED testing functionality
 - `split_image.py`: Image processing utilities
-- `/img/memory/set_01/`: Sample assets (animal images)
+- `/stream_toy_apps/memory_game/assets/tiles/tile_set_01/`: Sample assets (tile images)
 - `StreamDock-Device-SDK/`: External SDK for hardware communication
 
 ### Missing Components (To Be Implemented)
@@ -57,7 +57,7 @@ Abstract base class providing unified interface for physical and emulated device
 **Properties:**
 - `SCREEN_WIDTH`: int = 800
 - `SCREEN_HEIGHT`: int = 480
-- `TILE_SIZE`: int = 128
+- `TILE_SIZE`: int = 112
 - `TILE_COLS`: int = 5
 - `TILE_ROWS`: int = 3
 - `TILE_GAP_X`: int = 40
@@ -592,9 +592,11 @@ Each module in `/stream_toy_apps/<module_name>/` contains:
 memory_game/
 ├── manifest.py       # Module metadata
 ├── main.py          # Main scene class
-├── icon.png         # Module icon (128x128)
+├── icon.png         # Module icon (112x112)
 └── assets/          # Module-specific resources
-    ├── images/
+    ├── tiles/       # Tile sets for the game
+    │   ├── tile_set_01/
+    │   └── tile_set_02/
     └── sounds/
 ```
 
@@ -639,8 +641,8 @@ class MemoryGameScene(BaseScene):
 
     def _shuffle_cards(self):
         """Create card pairs and shuffle."""
-        assets = Path(__file__).parent / "assets" / "images"
-        images = list(assets.glob("*.png"))[:7]  # 7 pairs = 14 cards
+        assets = Path(__file__).parent / "assets" / "tiles" / "tile_set_01"
+        images = list(assets.glob("tile_*.png"))[:7]  # 7 pairs = 14 cards
         cards = images * 2  # Duplicate for pairs
         random.shuffle(cards)
         return cards
@@ -842,8 +844,8 @@ def run_server(port=5000):
 
         .button-overlay {
             position: absolute;
-            width: 128px;
-            height: 128px;
+            width: 112px;
+            height: 112px;
             cursor: pointer;
             border: 2px solid transparent;
             transition: border 0.1s;
@@ -880,7 +882,7 @@ def run_server(port=5000):
         const socket = io();
 
         // StreamDock configuration
-        const TILE_SIZE = 128;
+        const TILE_SIZE = 112;
         const TILE_GAP_X = 40;
         const TILE_GAP_Y = 42;
         const TILE_START_X = 0;

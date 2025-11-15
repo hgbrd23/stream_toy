@@ -64,7 +64,7 @@ class TestWebDevice(unittest.TestCase):
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
 
         # Create test image
-        test_image = Image.new('RGB', (128, 128), color='red')
+        test_image = Image.new('RGB', (112, 112), color='red')
 
         # Set tile
         self.device.set_tile(0, 0, test_image)
@@ -81,7 +81,7 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # Create and set test image
-        test_image = Image.new('RGB', (128, 128), color='blue')
+        test_image = Image.new('RGB', (112, 112), color='blue')
         self.device.set_tile(1, 2, test_image)
 
         # Submit
@@ -96,7 +96,7 @@ class TestWebDevice(unittest.TestCase):
     def test_tile_validation(self):
         """Test tile coordinate validation."""
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
-        test_image = Image.new('RGB', (128, 128), color='white')
+        test_image = Image.new('RGB', (112, 112), color='white')
 
         # Valid coordinates (0-2 rows, 0-4 cols)
         self.device.set_tile(0, 0, test_image)  # Should work
@@ -125,7 +125,7 @@ class TestWebDevice(unittest.TestCase):
 
         # Verify image in queue is resized
         queued_image = self.device._tile_queue[(0, 0)]
-        self.assertEqual(queued_image.size, (128, 128))
+        self.assertEqual(queued_image.size, (112, 112))
 
     def test_button_callback_registration(self):
         """Test button callback can be registered."""
@@ -173,7 +173,7 @@ class TestWebDevice(unittest.TestCase):
         positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
 
         for (row, col), color in zip(positions, colors):
-            img = Image.new('RGB', (128, 128), color=color)
+            img = Image.new('RGB', (112, 112), color=color)
             self.device.set_tile(row, col, img)
 
         # Submit all at once
@@ -192,7 +192,7 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # Set a tile to populate cache
-        test_image = Image.new('RGB', (128, 128), color='purple')
+        test_image = Image.new('RGB', (112, 112), color='purple')
         self.device.set_tile(2, 3, test_image)
         self.device.submit()
 
@@ -277,10 +277,10 @@ class TestWebDevice(unittest.TestCase):
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
 
         # Set same tile twice with different colors
-        img1 = Image.new('RGB', (128, 128), color='red')
+        img1 = Image.new('RGB', (112, 112), color='red')
         self.device.set_tile(0, 0, img1)
 
-        img2 = Image.new('RGB', (128, 128), color='blue')
+        img2 = Image.new('RGB', (112, 112), color='blue')
         self.device.set_tile(0, 0, img2)
 
         # Should only have one entry in queue (overwritten)
@@ -294,12 +294,12 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # First submit
-        img1 = Image.new('RGB', (128, 128), color='red')
+        img1 = Image.new('RGB', (112, 112), color='red')
         self.device.set_tile(0, 0, img1)
         self.device.submit()
 
         # Second submit
-        img2 = Image.new('RGB', (128, 128), color='green')
+        img2 = Image.new('RGB', (112, 112), color='green')
         self.device.set_tile(1, 1, img2)
         self.device.submit()
 
@@ -315,12 +315,12 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # First color
-        img1 = Image.new('RGB', (128, 128), color='red')
+        img1 = Image.new('RGB', (112, 112), color='red')
         self.device.set_tile(0, 0, img1)
         self.device.submit()
 
         # Overwrite with different color
-        img2 = Image.new('RGB', (128, 128), color='blue')
+        img2 = Image.new('RGB', (112, 112), color='blue')
         self.device.set_tile(0, 0, img2)
         self.device.submit()
 
@@ -337,7 +337,7 @@ class TestWebDevice(unittest.TestCase):
         # Submit tiles BEFORE client connects
         colors = ['red', 'green', 'blue']
         for idx, color in enumerate(colors):
-            img = Image.new('RGB', (128, 128), color=color)
+            img = Image.new('RGB', (112, 112), color=color)
             self.device.set_tile(0, idx, img)
 
         self.device.submit()
