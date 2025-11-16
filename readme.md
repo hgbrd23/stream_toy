@@ -23,17 +23,20 @@ GPIO23 (3.3V) ──┬─────────────→ Left amp SD_MO
 ```
 
 ## LEDs
-| Signal | Pi Pin  | Color |
-|--------|---------|-------|
-| DATA   | GPIO 10 | orange|
+| Signal | Pi Pin       | Color | Function             |
+|--------|--------------|-------|----------------------|
+| DATA   | GPIO 10      | orange| Neopixel             |
+ | ACT_LED | GPIO 26      | | Activity LED via 10k |
 | 5V     | Power Module | 
 | GND    | Power Module | 
+
+The Activity LED is connected via a 10k resistor so it just glows a bit. I used a white LED.
 
 # System Requirements
 Install the ARM64 lite Pi OS package.
 
 ```shell
-apt install -y libudev-dev libusb-1.0-0-dev libhidapi-libusb0 python3-dev python3-pil python3-pyudev libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon0 mpg123
+apt install -y libudev-dev libusb-1.0-0-dev libhidapi-libusb0 python3-dev python3-pil python3-pyudev libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon0 mpg123 portaudio19-dev python3-pyaudio
 ```
 
 On **Raspberry Pi OS Bookworm and later**, the config file lives at
@@ -93,6 +96,10 @@ enable_uart=1
 #dtparam=audio=on
 # Use two MAX98357A amps (manual L/R via SD pins)
 dtoverlay=max98357a,sdmode-pin=23
+# Enable GPIO activity LED
+dtparam=act_led_gpio=26
+dtparam=act_led_trigger=heartbeat
+
 ```
 
 ```

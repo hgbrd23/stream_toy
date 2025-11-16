@@ -1,0 +1,3 @@
+Place your podcast files here.
+
+You can organize them by show in subfolders.

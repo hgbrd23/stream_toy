@@ -1,0 +1,8 @@
+Place your music files here.
+
+You can organize them in subfolders like:
+- Rock/
+- Jazz/
+- Classical/
+- Pop/
+etc.

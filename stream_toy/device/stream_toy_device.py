@@ -12,6 +12,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import SoundManager - will be initialized per device
+from ..sound_manager import SoundManager
+
 
 class StreamToyDevice(ABC):
     """Abstract base class for all StreamToy devices."""
@@ -41,7 +44,11 @@ class StreamToyDevice(ABC):
         """Initialize the device."""
         self._key_callback: Optional[Callable[[int, int, bool], None]] = None
         self._tile_queue: Dict[Tuple[int, int], Union[Image.Image, str, Path]] = {}
+        self._current_tiles: Dict[Tuple[int, int], Union[Image.Image, str, Path]] = {}
         self._initialized = False
+
+        # Sound manager - shared across all devices
+        self.sound_manager: Optional[SoundManager] = None
 
     @abstractmethod
     def initialize(self) -> None:
@@ -53,10 +60,30 @@ class StreamToyDevice(ABC):
         """
         pass
 
+    def initialize_sound(self, sample_rate: int = 48000) -> None:
+        """
+        Initialize sound manager for this device.
+
+        Args:
+            sample_rate: Audio sample rate (default: 48000 Hz)
+        """
+        if self.sound_manager is None:
+            self.sound_manager = SoundManager(sample_rate=sample_rate)
+            if self.sound_manager.is_available():
+                logger.info("Sound manager initialized successfully")
+            else:
+                logger.warning("Sound manager unavailable (audio disabled)")
+
     @abstractmethod
     def close(self) -> None:
         """Close the device and cleanup resources."""
         pass
+
+    def close_sound(self) -> None:
+        """Close sound manager and cleanup audio resources."""
+        if self.sound_manager:
+            self.sound_manager.shutdown()
+            self.sound_manager = None
 
     @abstractmethod
     def set_tile(self, row: int, col: int, image: Union[Image.Image, str, Path]) -> None:
