@@ -18,6 +18,7 @@ from .input_manager import InputManager
 from .module import StreamToyModule, load_module_manifest
 from .scene.base_scene import BaseScene
 from .scene.module_launch_scene import ModuleLaunchScene
+from .settings_manager import SettingsManager
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ class StreamToyRuntime:
         self.devices: List[StreamToyDevice] = []
         self.device: Optional[StreamToyDevice] = None  # Primary device
         self.input_manager = InputManager()
+        self.settings_manager = SettingsManager()
         self.modules: List[StreamToyModule] = []
 
         self.current_scene: Optional[BaseScene] = None
@@ -74,7 +76,7 @@ class StreamToyRuntime:
                 logger.info("Initializing hardware device...")
                 hw_device = StreamDock293V3Device()
                 hw_device.initialize()
-                hw_device.initialize_sound(sample_rate=48000)  # Match ALSA config
+                hw_device.initialize_sound(sample_rate=48000, settings_manager=self.settings_manager)
                 hw_device.register_key_callback(self.input_manager.on_device_key_event)
                 self.devices.append(hw_device)
                 logger.info("Hardware device initialized successfully")
@@ -89,7 +91,7 @@ class StreamToyRuntime:
                 logger.info("Initializing web emulator...")
                 web_device = WebDevice(port=self.web_port)
                 web_device.initialize()
-                web_device.initialize_sound(sample_rate=48000)  # Match ALSA config
+                web_device.initialize_sound(sample_rate=48000, settings_manager=self.settings_manager)
                 web_device.register_key_callback(self.input_manager.on_device_key_event)
                 self.devices.append(web_device)
                 logger.info(f"Web emulator initialized successfully at http://0.0.0.0:{self.web_port}")

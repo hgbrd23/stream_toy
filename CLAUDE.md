@@ -224,4 +224,7 @@ Use the venv in .venv-emulator with requirements-emulator.
 - Do not touch SDK code under `StreamDock-Device-SDK/...`
 - Don't add ENV/configuration unless explicitly asked.
 - Don't reimplement stuff that is in the libraries unless explicitly asked. If you think it would be better ask the user.
-- When improving code, don't create a new version of anything. Refactor the existing one or create a new one and remove the old one. 
+- When improving code, don't create a new version of anything. Refactor the existing one or create a new one and remove the old one.
+- Never use hardcoded paths. Always use a path relative to our modules.
+- Don't create test scripts. Write unittests in the tests directory.
+- 

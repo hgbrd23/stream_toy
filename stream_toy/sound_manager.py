@@ -35,21 +35,30 @@ class SoundManager:
     - Thread-safe operation
     """
 
-    def __init__(self, sample_rate: int = 48000):
+    def __init__(self, sample_rate: int = 48000, settings_manager=None):
         """
         Initialize sound manager.
 
         Args:
             sample_rate: Sample rate (default: 48000 Hz to match ALSA config)
+            settings_manager: Optional SettingsManager for persistent volume
         """
         self.sample_rate = sample_rate
+        self._settings_manager = settings_manager
 
         # Playback state
         self._status = PlaybackStatus.STOPPED
         self._current_file: Optional[Path] = None
         self._position: float = 0.0  # Current position in seconds
         self._duration: float = 0.0  # Total duration in seconds
-        self._volume: float = 1.0  # Volume (0.0-1.0)
+
+        # Load volume from settings, or use default
+        if settings_manager:
+            self._volume: float = settings_manager.get_volume()
+            logger.info(f"Loaded volume from settings: {self._volume:.2f}")
+        else:
+            self._volume: float = 1.0  # Volume (0.0-1.0)
+            logger.warning("No settings_manager provided - volume changes will not persist!")
 
         # Callbacks
         self._status_callback: Optional[Callable[[PlaybackStatus], None]] = None
@@ -600,21 +609,31 @@ class SoundManager:
 
     def set_volume(self, volume: float) -> bool:
         """
-        Set music volume.
+        Set music volume and persist to settings.
 
         Args:
             volume: Volume level (0.0-1.0)
 
         Returns:
-            True if volume set successfully
+            True if volume set successfully (or saved even when audio unavailable)
         """
-        if not self._initialized:
-            return False
-
         try:
             with self._lock:
                 self._volume = max(0.0, min(1.0, volume))
-            logger.debug(f"Volume set to {self._volume:.2f}")
+
+            # Persist to settings if available (even when audio backend is disabled)
+            if self._settings_manager:
+                self._settings_manager.set_volume(self._volume)
+                logger.info(f"Volume set to {self._volume:.2f} (saved to settings)")
+            else:
+                logger.warning(f"Volume set to {self._volume:.2f} (NOT SAVED - no settings_manager)")
+
+            # Return False only if audio backend is unavailable
+            # (but settings are still saved above)
+            if not self._initialized:
+                logger.debug("Volume saved to settings, but audio backend unavailable")
+                return True  # Still return True since settings were saved
+
             return True
         except Exception as e:
             logger.error(f"Error setting volume: {e}")

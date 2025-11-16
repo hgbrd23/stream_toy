@@ -27,9 +27,6 @@ class WebDevice(StreamToyDevice):
     Renders device in HTML5 canvas and handles input via WebSocket.
     """
 
-    # Cache directory for button tiles (shared with hardware device)
-    CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "button_tiles"
-
     def __init__(self, host: str = '0.0.0.0', port: int = 5000):
         """
         Initialize web device.
@@ -43,7 +40,7 @@ class WebDevice(StreamToyDevice):
         self.port = port
         self._server_thread: Optional[threading.Thread] = None
 
-        # Persistent tile cache for reconnecting clients
+        # Persistent tile cache for reconnecting clients (stores Images)
         self._tile_cache: Dict[Tuple[int, int], Image.Image] = {}
 
         # LED Manager in fake mode (sends to browser)
@@ -52,93 +49,6 @@ class WebDevice(StreamToyDevice):
         # LED update thread
         self._led_update_running = False
         self._led_update_thread: Optional[threading.Thread] = None
-
-        # Ensure cache directory exists
-        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-    def _get_cache_path(self, cache_key: str) -> Path:
-        """
-        Get cache file path for a given cache key.
-
-        Args:
-            cache_key: Unique identifier for the cached tile
-
-        Returns:
-            Path to cached PNG file (web device uses PNG instead of JPEG)
-        """
-        # Sanitize cache key to make it filesystem-safe
-        safe_key = "".join(c if c.isalnum() or c in "._-" else "_" for c in cache_key)
-        # Web device uses PNG for simplicity
-        return self.CACHE_DIR / f"{safe_key}_web.png"
-
-    def has_cached_tile(self, cache_key: str) -> bool:
-        """
-        Check if a cached tile exists for the given cache key.
-
-        Args:
-            cache_key: Unique identifier for the cached tile
-
-        Returns:
-            True if cache exists, False otherwise
-        """
-        cache_path = self._get_cache_path(cache_key)
-        exists = cache_path.exists()
-        logger.debug(f"Cache check for '{cache_key}': {exists} ({cache_path})")
-        return exists
-
-    def set_tile_with_cache_key(self, row: int, col: int, image: Image.Image, cache_key: str) -> None:
-        """
-        Set a tile using a PIL Image and cache it with a cache key.
-
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            image: PIL Image to display and cache
-            cache_key: Unique identifier for caching this image
-
-        Raises:
-            ValueError: If row/col out of range
-        """
-        self.validate_tile_coords(row, col)
-
-        # Get cache path
-        cache_path = self._get_cache_path(cache_key)
-
-        # Resize if needed
-        if image.size != (self.TILE_SIZE, self.TILE_SIZE):
-            image = image.resize((self.TILE_SIZE, self.TILE_SIZE), Image.LANCZOS)
-
-        # Cache the image as PNG
-        image.save(cache_path, format='PNG')
-        logger.info(f"Cached tile '{cache_key}' at {cache_path}")
-
-        # Queue the cached file for display
-        self._tile_queue[(row, col)] = cache_path
-
-    def set_tile_from_cache(self, row: int, col: int, cache_key: str) -> None:
-        """
-        Set a tile using a previously cached image.
-
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            cache_key: Unique identifier for the cached tile
-
-        Raises:
-            ValueError: If row/col out of range or cache_key not found
-        """
-        self.validate_tile_coords(row, col)
-
-        # Get cache path
-        cache_path = self._get_cache_path(cache_key)
-
-        if not cache_path.exists():
-            raise ValueError(f"Cache key '{cache_key}' not found at {cache_path}")
-
-        logger.debug(f"Using cached tile '{cache_key}' for ({row},{col})")
-
-        # Queue the cached file for display
-        self._tile_queue[(row, col)] = cache_path
 
     def initialize(self) -> None:
         """Initialize web server in background thread."""
@@ -242,20 +152,36 @@ class WebDevice(StreamToyDevice):
 
         self._initialized = False
 
-    def set_tile(self, row: int, col: int, image: Union[Image.Image, str, Path]) -> None:
+    def set_tile(
+        self,
+        row: int,
+        col: int,
+        image_path: Union[str, Path],
+        cache_key: Optional[str] = None
+    ) -> None:
         """
         Queue a tile image update.
 
         Args:
             row: Tile row (0-2)
             col: Tile column (0-4)
-            image: PIL Image object or path to image file (str/Path)
+            image_path: Path to image file (str/Path)
+            cache_key: Optional cache key (ignored by web device)
+
+        Raises:
+            ValueError: If row/col out of range
+            FileNotFoundError: If image_path doesn't exist
         """
         self.validate_tile_coords(row, col)
 
-        # Store in queue - can be either PIL Image or file path
-        # We'll process it in submit()
-        self._tile_queue[(row, col)] = image
+        # Convert to Path
+        image_path = Path(image_path)
+
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+
+        # Queue the image path (cache_key ignored by web device)
+        self._tile_queue[(row, col)] = (image_path, cache_key or "")
 
     def submit(self) -> None:
         """Send all queued tile changes to browser."""
@@ -265,44 +191,12 @@ class WebDevice(StreamToyDevice):
 
         from ..web import server
 
-        # Filter queue to only include changed tiles
-        changed_tiles = {}
-        for (row, col), image_or_path in self._tile_queue.items():
-            # Check if this tile is different from what's currently displayed
-            current = self._current_tiles.get((row, col))
+        logger.info(f"[SUBMIT] Preparing to send {len(self._tile_queue)} tile updates to browser")
 
-            # Compare based on type
-            is_different = False
-            if current is None:
-                # Tile not set yet
-                is_different = True
-            elif isinstance(image_or_path, (str, Path)) and isinstance(current, (str, Path)):
-                # Both are file paths - compare paths
-                is_different = Path(image_or_path) != Path(current)
-            elif isinstance(image_or_path, Image.Image) and isinstance(current, Image.Image):
-                # Both are PIL Images - compare bytes (expensive but accurate)
-                is_different = image_or_path.tobytes() != current.tobytes()
-            else:
-                # Different types - definitely different
-                is_different = True
-
-            if is_different:
-                changed_tiles[(row, col)] = image_or_path
-
-        if not changed_tiles:
-            logger.debug("No tile changes detected - skipping submit")
-            self._tile_queue.clear()
-            return
-
-        logger.info(f"[SUBMIT] Preparing to send {len(changed_tiles)} tile updates to browser (skipped {len(self._tile_queue) - len(changed_tiles)} unchanged)")
-
-        for (row, col), image_or_path in changed_tiles.items():
-            # Load image if it's a file path
-            if isinstance(image_or_path, (str, Path)):
-                image = Image.open(image_or_path)
-                logger.debug(f"[SUBMIT] Loaded image from path: {image_or_path}")
-            else:
-                image = image_or_path
+        for (row, col), (image_path, cache_key) in self._tile_queue.items():
+            # Load image from file path
+            image = Image.open(image_path)
+            logger.debug(f"[SUBMIT] Loaded image from path: {image_path}")
 
             # Resize if needed
             if image.size != (self.TILE_SIZE, self.TILE_SIZE):
@@ -320,9 +214,6 @@ class WebDevice(StreamToyDevice):
 
             # Update cache for reconnecting clients
             self._tile_cache[(row, col)] = image.copy()
-
-            # Update current tiles tracking
-            self._current_tiles[(row, col)] = image_or_path
 
         # Clear queue
         self._tile_queue.clear()

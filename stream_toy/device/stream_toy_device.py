@@ -7,7 +7,6 @@ Provides a unified interface for physical and emulated devices.
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Dict, Union
-from PIL import Image
 import logging
 
 logger = logging.getLogger(__name__)
@@ -43,8 +42,7 @@ class StreamToyDevice(ABC):
     def __init__(self):
         """Initialize the device."""
         self._key_callback: Optional[Callable[[int, int, bool], None]] = None
-        self._tile_queue: Dict[Tuple[int, int], Union[Image.Image, str, Path]] = {}
-        self._current_tiles: Dict[Tuple[int, int], Union[Image.Image, str, Path]] = {}
+        self._tile_queue: Dict[Tuple[int, int], Tuple[Union[str, Path], str]] = {}  # (path, cache_key)
         self._initialized = False
 
         # Sound manager - shared across all devices
@@ -60,15 +58,16 @@ class StreamToyDevice(ABC):
         """
         pass
 
-    def initialize_sound(self, sample_rate: int = 48000) -> None:
+    def initialize_sound(self, sample_rate: int = 48000, settings_manager=None) -> None:
         """
         Initialize sound manager for this device.
 
         Args:
             sample_rate: Audio sample rate (default: 48000 Hz)
+            settings_manager: Optional SettingsManager for persistent volume
         """
         if self.sound_manager is None:
-            self.sound_manager = SoundManager(sample_rate=sample_rate)
+            self.sound_manager = SoundManager(sample_rate=sample_rate, settings_manager=settings_manager)
             if self.sound_manager.is_available():
                 logger.info("Sound manager initialized successfully")
             else:
@@ -86,15 +85,21 @@ class StreamToyDevice(ABC):
             self.sound_manager = None
 
     @abstractmethod
-    def set_tile(self, row: int, col: int, image: Union[Image.Image, str, Path]) -> None:
+    def set_tile(
+        self,
+        row: int,
+        col: int,
+        image_path: Union[str, Path],
+        cache_key: Optional[str] = None
+    ) -> None:
         """
         Queue a tile image update.
 
         Args:
             row: Tile row (0-2)
             col: Tile column (0-4)
-            image: PIL Image object or path to image file (str/Path)
-                  Will be resized to TILE_SIZE x TILE_SIZE
+            image_path: Path to image file (str/Path)
+            cache_key: Optional cache key for tracking (used by device-level caching)
 
         Raises:
             ValueError: If row/col out of range
