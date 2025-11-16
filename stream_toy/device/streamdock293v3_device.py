@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import os
+import hashlib
 from pathlib import Path
 from typing import Optional, Dict, Tuple, Union
 from PIL import Image
@@ -16,6 +17,47 @@ from .stream_toy_device import StreamToyDevice
 from ..led_manager import LEDManager
 
 logger = logging.getLogger(__name__)
+
+
+class DisplayTileManager:
+    """
+    Tracks which tiles are currently displayed on the device.
+
+    Uses cache keys instead of image comparison to determine if a tile needs updating.
+    """
+
+    def __init__(self):
+        """Initialize the manager."""
+        self._displayed_tiles: Dict[Tuple[int, int], str] = {}  # (row, col) -> cache_key
+
+    def set_displayed(self, row: int, col: int, cache_key: str) -> None:
+        """
+        Mark a tile as displayed with a specific cache key.
+
+        Args:
+            row: Tile row
+            col: Tile column
+            cache_key: Cache key of the displayed tile
+        """
+        self._displayed_tiles[(row, col)] = cache_key
+
+    def is_displayed(self, row: int, col: int, cache_key: str) -> bool:
+        """
+        Check if a tile is already displaying the given cache key.
+
+        Args:
+            row: Tile row
+            col: Tile column
+            cache_key: Cache key to check
+
+        Returns:
+            True if the tile is already displaying this cache key
+        """
+        return self._displayed_tiles.get((row, col)) == cache_key
+
+    def clear(self) -> None:
+        """Clear all tracked tiles."""
+        self._displayed_tiles.clear()
 
 
 class StreamDock293V3Device(StreamToyDevice):
@@ -59,6 +101,9 @@ class StreamDock293V3Device(StreamToyDevice):
         self._read_thread = None
         self._read_running = False
 
+        # Display tile manager for tracking what's currently shown
+        self._display_manager = DisplayTileManager()
+
         # LED Manager (GPIO 10)
         try:
             import board
@@ -70,89 +115,6 @@ class StreamDock293V3Device(StreamToyDevice):
 
         # Ensure cache directory exists
         self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-    def _get_cache_path(self, cache_key: str) -> Path:
-        """
-        Get cache file path for a given cache key.
-
-        Args:
-            cache_key: Unique identifier for the cached tile
-
-        Returns:
-            Path to cached native JPEG file
-        """
-        # Sanitize cache key to make it filesystem-safe
-        safe_key = "".join(c if c.isalnum() or c in "._-" else "_" for c in cache_key)
-        return self.CACHE_DIR / f"{safe_key}_native.jpg"
-
-    def has_cached_tile(self, cache_key: str) -> bool:
-        """
-        Check if a cached tile exists for the given cache key.
-
-        Args:
-            cache_key: Unique identifier for the cached tile
-
-        Returns:
-            True if cache exists, False otherwise
-        """
-        cache_path = self._get_cache_path(cache_key)
-        exists = cache_path.exists()
-        logger.debug(f"Cache check for '{cache_key}': {exists} ({cache_path})")
-        return exists
-
-    def set_tile_with_cache_key(self, row: int, col: int, image: Image.Image, cache_key: str) -> None:
-        """
-        Set a tile using a PIL Image and cache it with a cache key.
-
-        The image is converted to native format and cached. Future calls can use
-        set_tile_from_cache() with the same cache_key to avoid reprocessing.
-
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            image: PIL Image to display and cache
-            cache_key: Unique identifier for caching this image
-
-        Raises:
-            ValueError: If row/col out of range
-        """
-        self.validate_tile_coords(row, col)
-
-        # Get cache path
-        cache_path = self._get_cache_path(cache_key)
-
-        # Convert to native format and cache
-        native_image = self._to_native_format(image)
-        native_image.save(cache_path, format='JPEG', quality=95)
-        logger.info(f"Cached tile '{cache_key}' at {cache_path}")
-
-        # Queue the cached file for display
-        self._tile_queue[(row, col)] = cache_path
-
-    def set_tile_from_cache(self, row: int, col: int, cache_key: str) -> None:
-        """
-        Set a tile using a previously cached image.
-
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            cache_key: Unique identifier for the cached tile
-
-        Raises:
-            ValueError: If row/col out of range or cache_key not found
-        """
-        self.validate_tile_coords(row, col)
-
-        # Get cache path
-        cache_path = self._get_cache_path(cache_key)
-
-        if not cache_path.exists():
-            raise ValueError(f"Cache key '{cache_key}' not found at {cache_path}")
-
-        logger.debug(f"Using cached tile '{cache_key}' for ({row},{col})")
-
-        # Queue the cached file for display
-        self._tile_queue[(row, col)] = cache_path
 
     def initialize(self) -> None:
         """Initialize the StreamDock hardware."""
@@ -439,20 +401,36 @@ class StreamDock293V3Device(StreamToyDevice):
 
         self._initialized = False
 
-    def set_tile(self, row: int, col: int, image: Union[Image.Image, str, Path]) -> None:
+    def set_tile(
+        self,
+        row: int,
+        col: int,
+        image_path: Union[str, Path],
+        cache_key: Optional[str] = None
+    ) -> None:
         """
-        Queue a tile image update.
+        Queue a tile image update with optional caching.
 
         Args:
             row: Tile row (0-2)
             col: Tile column (0-4)
-            image: PIL Image object or path to image file (str/Path)
+            image_path: Path to image file (str/Path)
+            cache_key: Optional cache key for tracking
+
+        Raises:
+            ValueError: If row/col out of range
+            FileNotFoundError: If image_path doesn't exist
         """
         self.validate_tile_coords(row, col)
 
-        # Store in queue - can be either PIL Image or file path
-        # We'll process it in submit() to leverage caching for file paths
-        self._tile_queue[(row, col)] = image
+        # Convert to Path
+        image_path = Path(image_path)
+
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+
+        # Queue the image path with cache_key
+        self._tile_queue[(row, col)] = (image_path, cache_key or "")
 
     def submit(self) -> None:
         """Send all queued tile changes to device."""
@@ -463,29 +441,16 @@ class StreamDock293V3Device(StreamToyDevice):
         if not self.sdk_device:
             raise RuntimeError("Device not initialized")
 
-        # Filter queue to only include changed tiles
+        # Filter queue to only include changed tiles using DisplayTileManager
         changed_tiles = {}
-        for (row, col), image_or_path in self._tile_queue.items():
-            # Check if this tile is different from what's currently displayed
-            current = self._current_tiles.get((row, col))
-
-            # Compare based on type
-            is_different = False
-            if current is None:
-                # Tile not set yet
-                is_different = True
-            elif isinstance(image_or_path, (str, Path)) and isinstance(current, (str, Path)):
-                # Both are file paths - compare paths
-                is_different = Path(image_or_path) != Path(current)
-            elif isinstance(image_or_path, Image.Image) and isinstance(current, Image.Image):
-                # Both are PIL Images - compare bytes (expensive but accurate)
-                is_different = image_or_path.tobytes() != current.tobytes()
+        for (row, col), (image_path, cache_key) in self._tile_queue.items():
+            # Check if this tile needs updating using cache key comparison
+            if cache_key:
+                if not self._display_manager.is_displayed(row, col, cache_key):
+                    changed_tiles[(row, col)] = (image_path, cache_key)
             else:
-                # Different types - definitely different
-                is_different = True
-
-            if is_different:
-                changed_tiles[(row, col)] = image_or_path
+                # No cache key - always update
+                changed_tiles[(row, col)] = (image_path, cache_key)
 
         if not changed_tiles:
             logger.debug("No tile changes detected - skipping submit")
@@ -494,14 +459,11 @@ class StreamDock293V3Device(StreamToyDevice):
 
         logger.debug(f"Submitting {len(changed_tiles)} tile updates (skipped {len(self._tile_queue) - len(changed_tiles)} unchanged)")
 
-        # Track temporary files to clean up
-        temp_files = []
-
         try:
             # Import ctypes for direct transport call
             import ctypes
 
-            for (row, col), image_or_path in changed_tiles.items():
+            for (row, col), (image_path, cache_key) in changed_tiles.items():
                 # Convert tile coordinates to physical button index (1-15)
                 button_idx = self.TILE_TO_BUTTON.get((row, col))
 
@@ -509,42 +471,14 @@ class StreamDock293V3Device(StreamToyDevice):
                     logger.error(f"Failed to map tile ({row},{col}) to button index")
                     continue
 
-                # Determine native JPEG path
-                native_path = None
+                # Ensure native JPEG exists (creates cache if needed)
+                native_path = self._ensure_native_cached(image_path)
 
-                if isinstance(image_or_path, (str, Path)):
-                    # File path provided - use cached native JPEG
-                    source_path = Path(image_or_path)
-                    if not source_path.exists():
-                        logger.error(f"Image file not found: {source_path}")
-                        continue
-
-                    # Get or create cached native JPEG
-                    native_path = self._ensure_native_cached(source_path)
-                    logger.debug(f"Using cached native: {native_path}")
-
-                elif isinstance(image_or_path, Image.Image):
-                    # PIL Image provided - create temporary native JPEG
-                    # Convert to native format
-                    native_image = self._to_native_format(image_or_path)
-
-                    # Create temp directory if needed
-                    temp_dir = Path("/tmp/streamtoy")
-                    temp_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Save to temp file
-                    temp_path = temp_dir / f"tile_{row}_{col}_{time.time()}.jpg"
-                    native_image.save(temp_path, format='JPEG', quality=95)
-                    temp_files.append(str(temp_path))
-                    native_path = temp_path
-                    logger.debug(f"Created temp native: {native_path}")
-
-                else:
-                    logger.error(f"Invalid image type: {type(image_or_path)}")
+                if not native_path.exists():
+                    logger.error(f"Native cache file not found: {native_path}")
                     continue
 
                 # Send native JPEG to device using SDK's transport method
-                # This bypasses SDK's set_key_image and uses the pre-processed JPEG directly
                 path_bytes = str(native_path).encode('utf-8')
                 c_path = ctypes.c_char_p(path_bytes)
 
@@ -558,8 +492,9 @@ class StreamDock293V3Device(StreamToyDevice):
                     logger.warning(f"Failed to set key image for button {button_idx}: result={result}")
                 else:
                     logger.debug(f"Set tile ({row},{col}) -> button {button_idx}")
-                    # Update current tiles tracking - store what we sent
-                    self._current_tiles[(row, col)] = image_or_path
+                    # Update display manager with cache key
+                    if cache_key:
+                        self._display_manager.set_displayed(row, col, cache_key)
 
             # Clear queue
             num_tiles = len(self._tile_queue)
@@ -571,15 +506,9 @@ class StreamDock293V3Device(StreamToyDevice):
             self.sdk_device.refresh()
             logger.debug(f"Submitted {num_tiles} tile update(s)")
 
-        finally:
-            # Cleanup temp files (only PIL Image temps, not cached files)
-            for temp_path in temp_files:
-                try:
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                        logger.debug(f"Removed temp file: {temp_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove temp file {temp_path}: {e}")
+        except Exception as e:
+            logger.error(f"Error in submit: {e}", exc_info=True)
+            raise
 
     def set_background_led_animation(self, animation) -> None:
         """Set the idle LED animation."""

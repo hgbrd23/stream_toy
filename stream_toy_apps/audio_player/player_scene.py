@@ -54,10 +54,19 @@ class PlayerScene(BaseScene):
         super().__init__(runtime)
         self.audio_file = audio_file
         self.return_dir = return_dir if return_dir else audio_file.parent
-        self.current_volume = 0.1  # Starting volume
+
+        # Load current volume from sound manager (which reads from persistent settings)
+        sound_mgr = runtime.device.sound_manager if runtime.device else None
+        if sound_mgr and sound_mgr.is_available():
+            self.current_volume = sound_mgr._volume
+        else:
+            self.current_volume = 0.1  # Fallback if sound manager not available
+
         self.update_task: Optional[asyncio.Task] = None
-        self.should_exit = False  # Flag for async exit
         self.cover_art: Optional[Path] = None
+
+        # Track which static tiles have been initialized
+        self._static_tiles_initialized = False
 
     async def on_enter(self):
         """Initialize the scene and start playback."""
@@ -166,11 +175,24 @@ class PlayerScene(BaseScene):
             self.set_tile_text(1, 1, "❚❚\nPause", font_size=14)
         elif status == PlaybackStatus.PAUSED:
             self.set_tile_text(1, 1, "▶\nPlay", font_size=16)
-        else:
-            self.set_tile_text(1, 1, "■\nStop", font_size=16)
+        else:  # STOPPED
+            # Check if stopped at the end (finished) or just stopped
+            position = sound_mgr.get_position()
+            duration = sound_mgr.get_duration()
+            if duration > 0 and position >= duration - 1.0:
+                # Finished playing - show replay option
+                self.set_tile_text(1, 1, "↻\nReplay", font_size=14)
+            else:
+                # Stopped for other reason
+                self.set_tile_text(1, 1, "▶\nPlay", font_size=16)
 
-    async def _update_time_display(self):
-        """Update time display tiles."""
+    async def _update_time_display(self, force_all: bool = False):
+        """
+        Update time display tiles.
+
+        Args:
+            force_all: If True, update all tiles including static ones (duration, filename)
+        """
         sound_mgr = self.runtime.device.sound_manager
         if not sound_mgr:
             return
@@ -190,19 +212,23 @@ class PlayerScene(BaseScene):
         else:
             progress = 0
 
-        # Create time string
-        time_str = f"{pos_min}:{pos_sec:02d} / {dur_min}:{dur_sec:02d}"
-        progress_str = f"{progress:.0f}%"
-
-        # File name (full, with wrapping)
-        filename = self.audio_file.stem
-
-        # Display across multiple tiles
-        # Tiles (2,0), (2,1), (2,2), (2,3) = 4 tiles for time display
+        # ALWAYS update: Position (2,0) - changes every second
         self.set_tile_text(2, 0, f"{pos_min}:{pos_sec:02d}", font_size=18)
-        self.set_tile_text(2, 1, f"{dur_min}:{dur_sec:02d}", font_size=18)
+
+        # ALWAYS update: Progress (2,2) - changes as position changes
         self.set_tile_text(2, 2, f"{progress:.0f}%", font_size=18)
-        self.set_tile_text(2, 3, filename, font_size=10, wrap=True)
+
+        # Only update static tiles on first call or when forced
+        if not self._static_tiles_initialized or force_all:
+            # STATIC: Duration (2,1) - doesn't change after file starts
+            self.set_tile_text(2, 1, f"{dur_min}:{dur_sec:02d}", font_size=18)
+
+            # STATIC: Filename (2,3) - doesn't change
+            filename = self.audio_file.stem
+            self.set_tile_text(2, 3, filename, font_size=10, wrap=True)
+
+            self._static_tiles_initialized = True
+            logger.debug("Updated static tiles (duration, filename)")
 
     async def _show_error(self, message: str):
         """Show error message."""
@@ -221,11 +247,6 @@ class PlayerScene(BaseScene):
 
         while self._running:
             try:
-                # Check if we should exit
-                if self.should_exit:
-                    await self.go_back()
-                    break
-
                 sound_mgr = self.runtime.device.sound_manager
                 if not sound_mgr:
                     break
@@ -246,7 +267,7 @@ class PlayerScene(BaseScene):
                     last_position = position
                     last_status = status
 
-                await asyncio.sleep(0.5)  # Check twice per second
+                await asyncio.sleep(1.0)  # Check once per second (time only changes every second)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -256,21 +277,8 @@ class PlayerScene(BaseScene):
     def on_status_change(self, status: PlaybackStatus):
         """Handle playback status changes."""
         logger.debug(f"Playback status changed: {status}")
-
-        if status == PlaybackStatus.STOPPED:
-            # Check if playback actually finished (not just seeking)
-            sound_mgr = self.runtime.device.sound_manager
-            if sound_mgr:
-                position = sound_mgr.get_position()
-                duration = sound_mgr.get_duration()
-                # Only exit if we're near the end (within 1 second)
-                if duration > 0 and position >= duration - 1.0:
-                    # Playback finished naturally - set flag for main loop to handle
-                    logger.info("Playback finished naturally, exiting player")
-                    self.should_exit = True
-                else:
-                    # Stopped for other reason (like seeking), don't exit
-                    logger.debug(f"Stopped but not finished (pos={position:.1f}s, dur={duration:.1f}s)")
+        # Note: We don't auto-exit when playback finishes.
+        # User can replay or manually go back.
 
     def on_position_update(self, position: float, duration: float):
         """Handle playback position updates."""
@@ -301,7 +309,7 @@ class PlayerScene(BaseScene):
 
         # Volume and pause (Row 1)
         elif button == self.BTN_VOL_DOWN:
-            self.current_volume = max(0.01, self.current_volume - 0.1)
+            self.current_volume = max(0.01, self.current_volume - 0.05)
             sound_mgr.set_volume(self.current_volume)
             logger.info(f"Volume: {self.current_volume:.2f}")
         elif button == self.BTN_PAUSE:
@@ -310,10 +318,15 @@ class PlayerScene(BaseScene):
                 sound_mgr.pause()
             elif status == PlaybackStatus.PAUSED:
                 sound_mgr.resume()
+            elif status == PlaybackStatus.STOPPED:
+                # Restart playback from beginning
+                logger.info("Restarting playback from beginning")
+                sound_mgr.stop()  # Ensure clean state
+                sound_mgr.play_music(self.audio_file, volume=self.current_volume)
         elif button == self.BTN_VOL_UP:
-            self.current_volume = min(1.0, self.current_volume + 0.1)
+            self.current_volume = min(1.0, self.current_volume + 0.05)
             sound_mgr.set_volume(self.current_volume)
-            logger.info(f"Volume: {self.current_volume:.1f}")
+            logger.info(f"Volume: {self.current_volume:.2f}")
 
         # Back button (Row 2)
         elif button == self.BTN_BACK:

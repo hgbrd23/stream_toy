@@ -11,6 +11,9 @@ import base64
 from io import BytesIO
 from PIL import Image
 import random
+import tempfile
+import shutil
+from pathlib import Path
 
 from stream_toy.device.web_device import WebDevice
 from stream_toy.web import server
@@ -25,6 +28,9 @@ class TestWebDevice(unittest.TestCase):
         self.test_port = random.randint(6000, 9000)
         self.device = None
 
+        # Create temporary directory for test images
+        self.temp_dir = Path(tempfile.mkdtemp())
+
         # Track received events
         self.received_tile_updates = []
         self.received_led_updates = []
@@ -36,6 +42,17 @@ class TestWebDevice(unittest.TestCase):
             self.device.close()
         # Give server time to cleanup
         time.sleep(0.3)
+
+        # Clean up temporary directory
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+
+    def _create_test_image(self, color='blue', size=(112, 112)):
+        """Helper to create a test image file and return its path."""
+        img = Image.new('RGB', size, color=color)
+        path = self.temp_dir / f"test_{color}_{size[0]}x{size[1]}.png"
+        img.save(path)
+        return path
 
     def test_device_initialization(self):
         """Test WebDevice can be initialized."""
@@ -64,10 +81,10 @@ class TestWebDevice(unittest.TestCase):
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
 
         # Create test image
-        test_image = Image.new('RGB', (112, 112), color='red')
+        test_image_path = self._create_test_image('red')
 
         # Set tile
-        self.device.set_tile(0, 0, test_image)
+        self.device.set_tile(0, 0, test_image_path)
 
         # Verify it's queued
         self.assertIn((0, 0), self.device._tile_queue)
@@ -81,8 +98,8 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # Create and set test image
-        test_image = Image.new('RGB', (112, 112), color='blue')
-        self.device.set_tile(1, 2, test_image)
+        test_image_path = self._create_test_image('blue')
+        self.device.set_tile(1, 2, test_image_path)
 
         # Submit
         self.device.submit()
@@ -96,36 +113,37 @@ class TestWebDevice(unittest.TestCase):
     def test_tile_validation(self):
         """Test tile coordinate validation."""
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
-        test_image = Image.new('RGB', (112, 112), color='white')
+        test_image_path = self._create_test_image('white')
 
         # Valid coordinates (0-2 rows, 0-4 cols)
-        self.device.set_tile(0, 0, test_image)  # Should work
-        self.device.set_tile(2, 4, test_image)  # Should work
+        self.device.set_tile(0, 0, test_image_path)  # Should work
+        self.device.set_tile(2, 4, test_image_path)  # Should work
 
         # Invalid row
         with self.assertRaises(ValueError):
-            self.device.set_tile(3, 0, test_image)
+            self.device.set_tile(3, 0, test_image_path)
 
         # Invalid column
         with self.assertRaises(ValueError):
-            self.device.set_tile(0, 5, test_image)
+            self.device.set_tile(0, 5, test_image_path)
 
         # Negative coordinates
         with self.assertRaises(ValueError):
-            self.device.set_tile(-1, 0, test_image)
+            self.device.set_tile(-1, 0, test_image_path)
 
     def test_tile_image_resizing(self):
         """Test images are resized to tile size."""
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
 
         # Create oversized image
-        large_image = Image.new('RGB', (256, 256), color='green')
+        large_image_path = self._create_test_image('green', size=(256, 256))
 
-        self.device.set_tile(0, 0, large_image)
+        self.device.set_tile(0, 0, large_image_path)
+        self.device.submit()
 
-        # Verify image in queue is resized
-        queued_image = self.device._tile_queue[(0, 0)]
-        self.assertEqual(queued_image.size, (112, 112))
+        # Verify image in cache is resized to tile size
+        cached_image = self.device._tile_cache[(0, 0)]
+        self.assertEqual(cached_image.size, (112, 112))
 
     def test_button_callback_registration(self):
         """Test button callback can be registered."""
@@ -173,8 +191,8 @@ class TestWebDevice(unittest.TestCase):
         positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
 
         for (row, col), color in zip(positions, colors):
-            img = Image.new('RGB', (112, 112), color=color)
-            self.device.set_tile(row, col, img)
+            img_path = self._create_test_image(color)
+            self.device.set_tile(row, col, img_path)
 
         # Submit all at once
         self.device.submit()
@@ -192,8 +210,8 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # Set a tile to populate cache
-        test_image = Image.new('RGB', (112, 112), color='purple')
-        self.device.set_tile(2, 3, test_image)
+        test_image_path = self._create_test_image('purple')
+        self.device.set_tile(2, 3, test_image_path)
         self.device.submit()
 
         # Verify cache has the tile
@@ -277,11 +295,11 @@ class TestWebDevice(unittest.TestCase):
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
 
         # Set same tile twice with different colors
-        img1 = Image.new('RGB', (112, 112), color='red')
-        self.device.set_tile(0, 0, img1)
+        img1_path = self._create_test_image('red')
+        self.device.set_tile(0, 0, img1_path)
 
-        img2 = Image.new('RGB', (112, 112), color='blue')
-        self.device.set_tile(0, 0, img2)
+        img2_path = self._create_test_image('blue')
+        self.device.set_tile(0, 0, img2_path)
 
         # Should only have one entry in queue (overwritten)
         self.assertEqual(len(self.device._tile_queue), 1)
@@ -294,13 +312,13 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # First submit
-        img1 = Image.new('RGB', (112, 112), color='red')
-        self.device.set_tile(0, 0, img1)
+        img1_path = self._create_test_image('red')
+        self.device.set_tile(0, 0, img1_path)
         self.device.submit()
 
         # Second submit
-        img2 = Image.new('RGB', (112, 112), color='green')
-        self.device.set_tile(1, 1, img2)
+        img2_path = self._create_test_image('green')
+        self.device.set_tile(1, 1, img2_path)
         self.device.submit()
 
         # Both should be in cache
@@ -315,13 +333,13 @@ class TestWebDevice(unittest.TestCase):
         time.sleep(0.5)
 
         # First color
-        img1 = Image.new('RGB', (112, 112), color='red')
-        self.device.set_tile(0, 0, img1)
+        img1_path = self._create_test_image('red')
+        self.device.set_tile(0, 0, img1_path)
         self.device.submit()
 
         # Overwrite with different color
-        img2 = Image.new('RGB', (112, 112), color='blue')
-        self.device.set_tile(0, 0, img2)
+        img2_path = self._create_test_image('blue')
+        self.device.set_tile(0, 0, img2_path)
         self.device.submit()
 
         # Should still have one entry, but updated
@@ -337,8 +355,8 @@ class TestWebDevice(unittest.TestCase):
         # Submit tiles BEFORE client connects
         colors = ['red', 'green', 'blue']
         for idx, color in enumerate(colors):
-            img = Image.new('RGB', (112, 112), color=color)
-            self.device.set_tile(0, idx, img)
+            img_path = self._create_test_image(color)
+            self.device.set_tile(0, idx, img_path)
 
         self.device.submit()
 

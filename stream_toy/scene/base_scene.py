@@ -12,11 +12,16 @@ from PIL import Image, ImageDraw, ImageFont
 import asyncio
 import logging
 import os
+import hashlib
 
 if TYPE_CHECKING:
     from ..runtime import StreamToyRuntime
 
 logger = logging.getLogger(__name__)
+
+
+# Module-level font cache to avoid reloading fonts
+_FONT_CACHE: Dict[Tuple[str, int], ImageFont.FreeTypeFont] = {}
 
 
 class BaseScene(ABC):
@@ -26,6 +31,9 @@ class BaseScene(ABC):
     Scenes represent different states/screens in the application,
     such as menus, games, or settings screens.
     """
+
+    # Cache directory for generated tile images
+    CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "scene_tiles"
 
     def __init__(self, runtime: 'StreamToyRuntime'):
         """
@@ -38,7 +46,9 @@ class BaseScene(ABC):
         self.device = runtime.device
         self.input_manager = runtime.input_manager
         self._running = False
-        self._tile_cache: Dict[Tuple[int, int], Image.Image] = {}
+
+        # Ensure cache directory exists
+        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     @abstractmethod
     async def on_enter(self) -> None:
@@ -75,6 +85,105 @@ class BaseScene(ABC):
         """
         pass
 
+    def _get_cache_path(self, cache_key: str) -> Path:
+        """
+        Get the file path for a cached image.
+
+        Args:
+            cache_key: Unique identifier for the image
+
+        Returns:
+            Path where the cached image should be stored
+        """
+        # Sanitize first 30 chars for readability
+        prefix = "".join(c if c.isalnum() or c in "._-" else "_" for c in cache_key[:30])
+
+        # Hash complete cache key for uniqueness
+        key_hash = hashlib.md5(cache_key.encode('utf-8')).hexdigest()[:12]
+
+        # Combine: prefix + hash
+        filename = f"{prefix}_{key_hash}.png"
+        return self.CACHE_DIR / filename
+
+    def _is_cached(self, cache_key: str) -> bool:
+        """
+        Check if an image is already cached on disk.
+
+        Args:
+            cache_key: Unique identifier for the image
+
+        Returns:
+            True if cache file exists, False otherwise
+        """
+        cache_path = self._get_cache_path(cache_key)
+        return cache_path.exists()
+
+    def _cache_image(self, cache_key: str, image: Image.Image) -> Path:
+        """
+        Save a PIL Image to the file cache.
+
+        Args:
+            cache_key: Unique identifier for the image
+            image: PIL Image to cache
+
+        Returns:
+            Path to the cached file
+        """
+        cache_path = self._get_cache_path(cache_key)
+
+        # Save to cache if not already there
+        if not cache_path.exists():
+            image.save(cache_path, format='PNG')
+            logger.debug(f"Cached image to: {cache_path.name}")
+
+        return cache_path
+
+    def _get_font(self, font_size: int) -> ImageFont.FreeTypeFont:
+        """
+        Get a cached font object or load it.
+
+        Args:
+            font_size: Font size in points
+
+        Returns:
+            Font object
+        """
+        global _FONT_CACHE
+
+        # Check cache first
+        noto_dir = Path(__file__).parent.parent.parent / "assets" / "fonts" / "Noto_Sans"
+        font_path = str(noto_dir / "NotoSans-Bold.ttf")
+
+        cache_key = (font_path, font_size)
+        if cache_key in _FONT_CACHE:
+            return _FONT_CACHE[cache_key]
+
+        # Not in cache, load font
+        font_paths = [
+            str(noto_dir / "NotoSans-Bold.ttf"),
+            str(noto_dir / "NotoSans-Regular.ttf"),
+            str(noto_dir / "NotoSans-Medium.ttf"),
+        ]
+
+        font = None
+        for path in font_paths:
+            if os.path.exists(path):
+                try:
+                    font = ImageFont.truetype(path, font_size)
+                    cache_key = (path, font_size)
+                    _FONT_CACHE[cache_key] = font
+                    logger.debug(f"Loaded and cached font: {Path(path).name} size {font_size}")
+                    return font
+                except Exception:
+                    continue
+
+        # Fallback to default font
+        if font is None:
+            font = ImageFont.load_default()
+            logger.warning("Using default font, Noto Sans fonts not found")
+
+        return font
+
     def set_tile_text(
         self,
         row: int,
@@ -99,87 +208,82 @@ class BaseScene(ABC):
             wrap: Auto-wrap text to fit tile width
             max_width: Maximum text width before wrapping (default: 90% of tile size)
         """
+        # Generate cache key based on all parameters that affect the output
+        cache_key = f"text|{text}|fs{font_size}|fg{fg_color}|bg{bg_color}|w{wrap}|ts{self.device.TILE_SIZE}"
+
+        # Check if we have this image cached
+        if self._is_cached(cache_key):
+            cache_path = self._get_cache_path(cache_key)
+            logger.debug(f"Using cached text image: {cache_path.name}")
+            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+            return
+
+        # Image not cached, generate it
         img = Image.new('RGB', (self.device.TILE_SIZE, self.device.TILE_SIZE), bg_color)
         draw = ImageDraw.Draw(img)
 
-        # Try to load a nice font, fall back to default
-        # Use Noto Sans fonts which have excellent Unicode/emoji support
-        font = None
-        # Path relative to this file: /workspace/stream_toy/scene/base_scene.py
-        # Fonts are at: /workspace/assets/fonts/Noto_Sans/
-        noto_dir = Path(__file__).parent.parent.parent / "assets" / "fonts" / "Noto_Sans"
-        font_paths = [
-            str(noto_dir / "NotoSans-Bold.ttf"),
-            str(noto_dir / "NotoSans-Regular.ttf"),
-            str(noto_dir / "NotoSans-Medium.ttf"),
-        ]
+        # Get cached font (much faster than reloading)
+        font = self._get_font(font_size)
 
-        for font_path in font_paths:
-            if os.path.exists(font_path):
-                try:
-                    font = ImageFont.truetype(font_path, font_size)
-                    break
-                except Exception:
-                    continue
+        # Fast path for simple text without wrapping (common case for time display, etc.)
+        # Skip expensive text measurement if wrapping is disabled
+        if not wrap:
+            lines = text.split('\n')
+        else:
+            # Handle wrapping and multi-line text
+            if max_width is None:
+                max_width = int(self.device.TILE_SIZE * 0.9)
 
-        if font is None:
-            font = ImageFont.load_default()
-            logger.warning("Using default font, Noto Sans fonts not found")
+            lines = []
 
-        # Handle wrapping and multi-line text
-        if max_width is None:
-            max_width = int(self.device.TILE_SIZE * 0.9)
+            # Split by existing newlines first
+            text_lines = text.split('\n')
 
-        lines = []
+            for line in text_lines:
+                if line:
+                    # Auto-wrap long lines
+                    # First try word wrapping (split by spaces)
+                    words = line.split(' ') if ' ' in line else [line]
+                    current_line = ''
 
-        # Split by existing newlines first
-        text_lines = text.split('\n')
+                    for word in words:
+                        test_line = f"{current_line} {word}".strip()
+                        bbox = draw.textbbox((0, 0), test_line, font=font)
+                        width = bbox[2] - bbox[0]
 
-        for line in text_lines:
-            if wrap and line:
-                # Auto-wrap long lines
-                # First try word wrapping (split by spaces)
-                words = line.split(' ') if ' ' in line else [line]
-                current_line = ''
-
-                for word in words:
-                    test_line = f"{current_line} {word}".strip()
-                    bbox = draw.textbbox((0, 0), test_line, font=font)
-                    width = bbox[2] - bbox[0]
-
-                    if width <= max_width:
-                        current_line = test_line
-                    else:
-                        # Word doesn't fit, need to break it up
-                        if current_line:
-                            lines.append(current_line)
-                            current_line = ''
-
-                        # Check if word itself is too long (no spaces, long filename)
-                        bbox_word = draw.textbbox((0, 0), word, font=font)
-                        word_width = bbox_word[2] - bbox_word[0]
-
-                        if word_width > max_width:
-                            # Word is too long, break it character by character
-                            for char in word:
-                                test_line = current_line + char
-                                bbox = draw.textbbox((0, 0), test_line, font=font)
-                                width = bbox[2] - bbox[0]
-
-                                if width <= max_width:
-                                    current_line = test_line
-                                else:
-                                    if current_line:
-                                        lines.append(current_line)
-                                    current_line = char
+                        if width <= max_width:
+                            current_line = test_line
                         else:
-                            # Word fits on its own line
-                            current_line = word
+                            # Word doesn't fit, need to break it up
+                            if current_line:
+                                lines.append(current_line)
+                                current_line = ''
 
-                if current_line:
-                    lines.append(current_line)
-            else:
-                lines.append(line)
+                            # Check if word itself is too long (no spaces, long filename)
+                            bbox_word = draw.textbbox((0, 0), word, font=font)
+                            word_width = bbox_word[2] - bbox_word[0]
+
+                            if word_width > max_width:
+                                # Word is too long, break it character by character
+                                for char in word:
+                                    test_line = current_line + char
+                                    bbox = draw.textbbox((0, 0), test_line, font=font)
+                                    width = bbox[2] - bbox[0]
+
+                                    if width <= max_width:
+                                        current_line = test_line
+                                    else:
+                                        if current_line:
+                                            lines.append(current_line)
+                                        current_line = char
+                            else:
+                                # Word fits on its own line
+                                current_line = word
+
+                    if current_line:
+                        lines.append(current_line)
+                else:
+                    lines.append(line)
 
         # Calculate total text height
         line_height = font_size + 2  # Small spacing between lines
@@ -197,7 +301,9 @@ class BaseScene(ABC):
             draw.text((x, y), line, fill=fg_color, font=font)
             y += line_height
 
-        self.set_tile_image(row, col, img)
+        # Cache the generated image to file and send path to device
+        cache_path = self._cache_image(cache_key, img)
+        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def set_tile_svg(self, row: int, col: int, svg_path: str) -> None:
         """
@@ -223,13 +329,27 @@ class BaseScene(ABC):
         if not os.path.exists(svg_path):
             raise FileNotFoundError(f"SVG file not found: {svg_path}")
 
+        # Generate cache key based on SVG path and tile size
+        cache_key = f"svg|{svg_path}|ts{self.device.TILE_SIZE}"
+
+        # Check if we have this image cached
+        if self._is_cached(cache_key):
+            cache_path = self._get_cache_path(cache_key)
+            logger.debug(f"Using cached SVG image: {cache_path.name}")
+            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+            return
+
+        # Image not cached, generate it
         png_data = svg2png(
             url=svg_path,
             output_width=self.device.TILE_SIZE,
             output_height=self.device.TILE_SIZE
         )
         img = Image.open(BytesIO(png_data))
-        self.set_tile_image(row, col, img)
+
+        # Cache the generated image to file and send path to device
+        cache_path = self._cache_image(cache_key, img)
+        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def set_tile_image(self, row: int, col: int, image: Image.Image) -> None:
         """
@@ -244,8 +364,15 @@ class BaseScene(ABC):
         if image.size != (self.device.TILE_SIZE, self.device.TILE_SIZE):
             image = image.resize((self.device.TILE_SIZE, self.device.TILE_SIZE), Image.LANCZOS)
 
-        self._tile_cache[(row, col)] = image
-        self.device.set_tile(row, col, image)
+        # Generate a cache key based on image data hash (for uncached PIL Images)
+        import hashlib
+        img_bytes = image.tobytes()
+        img_hash = hashlib.md5(img_bytes).hexdigest()[:16]
+        cache_key = f"img|{img_hash}|ts{self.device.TILE_SIZE}"
+
+        # Cache to file and send path to device
+        cache_path = self._cache_image(cache_key, image)
+        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def set_tile_file(self, row: int, col: int, image_path: str) -> None:
         """
@@ -262,8 +389,11 @@ class BaseScene(ABC):
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image file not found: {image_path}")
 
-        img = Image.open(image_path)
-        self.set_tile_image(row, col, img)
+        # Generate cache key from file path
+        cache_key = f"file|{image_path}"
+
+        # Pass the file path directly to the device
+        self.device.set_tile(row, col, image_path, cache_key=cache_key)
 
     def set_tile_image_with_text(
         self,
@@ -292,6 +422,16 @@ class BaseScene(ABC):
         if not os.path.exists(image_path):
             # Fallback to text-only if image not found
             self.set_tile_text(row, col, text, font_size=font_size, fg_color=fg_color, wrap=wrap)
+            return
+
+        # Generate cache key based on image path and text overlay parameters
+        cache_key = f"img_text|{image_path}|{text}|fs{font_size}|fg{fg_color}|op{bg_opacity}|ts{self.device.TILE_SIZE}"
+
+        # Check if we have this image cached
+        if self._is_cached(cache_key):
+            cache_path = self._get_cache_path(cache_key)
+            logger.debug(f"Using cached image+text: {cache_path.name}")
+            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
             return
 
         # Load and resize image
@@ -400,7 +540,9 @@ class BaseScene(ABC):
                 y = y_start + (i * line_height)
                 draw.text((x, y), line, fill=fg_color, font=font)
 
-        self.set_tile_image(row, col, img)
+        # Cache the generated image to file and send path to device
+        cache_path = self._cache_image(cache_key, img)
+        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def clear_tile(self, row: int, col: int, color: str = "black") -> None:
         """
@@ -411,8 +553,20 @@ class BaseScene(ABC):
             col: Tile column (0-4)
             color: Color name or hex
         """
+        # Generate cache key for solid color tiles
+        cache_key = f"color|{color}|ts{self.device.TILE_SIZE}"
+
+        # Check if we have this cached
+        if self._is_cached(cache_key):
+            cache_path = self._get_cache_path(cache_key)
+            logger.debug(f"Using cached color tile: {cache_path.name}")
+            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+            return
+
+        # Generate and cache
         img = Image.new('RGB', (self.device.TILE_SIZE, self.device.TILE_SIZE), color)
-        self.set_tile_image(row, col, img)
+        cache_path = self._cache_image(cache_key, img)
+        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def clear_all_tiles(self, color: str = "black") -> None:
         """
