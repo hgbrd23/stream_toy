@@ -1,0 +1,3 @@
+Place your audiobook files here.
+
+You can organize them by book or author in subfolders.

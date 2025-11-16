@@ -463,7 +463,36 @@ class StreamDock293V3Device(StreamToyDevice):
         if not self.sdk_device:
             raise RuntimeError("Device not initialized")
 
-        logger.debug(f"Submitting {len(self._tile_queue)} tile updates")
+        # Filter queue to only include changed tiles
+        changed_tiles = {}
+        for (row, col), image_or_path in self._tile_queue.items():
+            # Check if this tile is different from what's currently displayed
+            current = self._current_tiles.get((row, col))
+
+            # Compare based on type
+            is_different = False
+            if current is None:
+                # Tile not set yet
+                is_different = True
+            elif isinstance(image_or_path, (str, Path)) and isinstance(current, (str, Path)):
+                # Both are file paths - compare paths
+                is_different = Path(image_or_path) != Path(current)
+            elif isinstance(image_or_path, Image.Image) and isinstance(current, Image.Image):
+                # Both are PIL Images - compare bytes (expensive but accurate)
+                is_different = image_or_path.tobytes() != current.tobytes()
+            else:
+                # Different types - definitely different
+                is_different = True
+
+            if is_different:
+                changed_tiles[(row, col)] = image_or_path
+
+        if not changed_tiles:
+            logger.debug("No tile changes detected - skipping submit")
+            self._tile_queue.clear()
+            return
+
+        logger.debug(f"Submitting {len(changed_tiles)} tile updates (skipped {len(self._tile_queue) - len(changed_tiles)} unchanged)")
 
         # Track temporary files to clean up
         temp_files = []
@@ -472,7 +501,7 @@ class StreamDock293V3Device(StreamToyDevice):
             # Import ctypes for direct transport call
             import ctypes
 
-            for (row, col), image_or_path in self._tile_queue.items():
+            for (row, col), image_or_path in changed_tiles.items():
                 # Convert tile coordinates to physical button index (1-15)
                 button_idx = self.TILE_TO_BUTTON.get((row, col))
 
@@ -529,6 +558,8 @@ class StreamDock293V3Device(StreamToyDevice):
                     logger.warning(f"Failed to set key image for button {button_idx}: result={result}")
                 else:
                     logger.debug(f"Set tile ({row},{col}) -> button {button_idx}")
+                    # Update current tiles tracking - store what we sent
+                    self._current_tiles[(row, col)] = image_or_path
 
             # Clear queue
             num_tiles = len(self._tile_queue)

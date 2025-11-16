@@ -74,6 +74,7 @@ class StreamToyRuntime:
                 logger.info("Initializing hardware device...")
                 hw_device = StreamDock293V3Device()
                 hw_device.initialize()
+                hw_device.initialize_sound(sample_rate=48000)  # Match ALSA config
                 hw_device.register_key_callback(self.input_manager.on_device_key_event)
                 self.devices.append(hw_device)
                 logger.info("Hardware device initialized successfully")
@@ -88,6 +89,7 @@ class StreamToyRuntime:
                 logger.info("Initializing web emulator...")
                 web_device = WebDevice(port=self.web_port)
                 web_device.initialize()
+                web_device.initialize_sound(sample_rate=48000)  # Match ALSA config
                 web_device.register_key_callback(self.input_manager.on_device_key_event)
                 self.devices.append(web_device)
                 logger.info(f"Web emulator initialized successfully at http://0.0.0.0:{self.web_port}")
@@ -287,6 +289,7 @@ class StreamToyRuntime:
         for device in self.devices:
             try:
                 logger.debug(f"Closing device: {type(device).__name__}")
+                device.close_sound()  # Close sound manager first
                 device.close()
             except Exception as e:
                 logger.error(f"Error closing device: {e}", exc_info=True)

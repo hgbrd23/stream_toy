@@ -265,9 +265,38 @@ class WebDevice(StreamToyDevice):
 
         from ..web import server
 
-        logger.info(f"[SUBMIT] Preparing to send {len(self._tile_queue)} tile updates to browser")
-
+        # Filter queue to only include changed tiles
+        changed_tiles = {}
         for (row, col), image_or_path in self._tile_queue.items():
+            # Check if this tile is different from what's currently displayed
+            current = self._current_tiles.get((row, col))
+
+            # Compare based on type
+            is_different = False
+            if current is None:
+                # Tile not set yet
+                is_different = True
+            elif isinstance(image_or_path, (str, Path)) and isinstance(current, (str, Path)):
+                # Both are file paths - compare paths
+                is_different = Path(image_or_path) != Path(current)
+            elif isinstance(image_or_path, Image.Image) and isinstance(current, Image.Image):
+                # Both are PIL Images - compare bytes (expensive but accurate)
+                is_different = image_or_path.tobytes() != current.tobytes()
+            else:
+                # Different types - definitely different
+                is_different = True
+
+            if is_different:
+                changed_tiles[(row, col)] = image_or_path
+
+        if not changed_tiles:
+            logger.debug("No tile changes detected - skipping submit")
+            self._tile_queue.clear()
+            return
+
+        logger.info(f"[SUBMIT] Preparing to send {len(changed_tiles)} tile updates to browser (skipped {len(self._tile_queue) - len(changed_tiles)} unchanged)")
+
+        for (row, col), image_or_path in changed_tiles.items():
             # Load image if it's a file path
             if isinstance(image_or_path, (str, Path)):
                 image = Image.open(image_or_path)
@@ -291,6 +320,9 @@ class WebDevice(StreamToyDevice):
 
             # Update cache for reconnecting clients
             self._tile_cache[(row, col)] = image.copy()
+
+            # Update current tiles tracking
+            self._current_tiles[(row, col)] = image_or_path
 
         # Clear queue
         self._tile_queue.clear()

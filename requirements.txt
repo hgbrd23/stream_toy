@@ -7,6 +7,10 @@ adafruit-circuitpython-neopixel>=6.3
 adafruit-circuitpython-led-animation>=2.7
 rpi_ws281x>=5.0  # For Raspberry Pi
 
+# Audio support
+miniaudio>=1.59  # For audio decoding and playback (MP3, WAV, FLAC, etc.)
+PyAudio>=0.2.13  # Low-level audio I/O
+
 flask>=2.3
 flask-socketio>=5.3
 python-socketio>=5.9
