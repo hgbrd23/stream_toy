@@ -28,10 +28,49 @@ class MemoryGameScene(BaseScene):
         self.first_card: Optional[int] = None
         self.score: int = 0
         self.moves: int = 0
+        self.game_won: bool = False
 
     async def on_enter(self) -> None:
         """Initialize game."""
         logger.info("Starting Memory Game")
+
+        # Reset game state
+        self.game_won = False
+        self.matched.clear()
+        self.revealed.clear()
+        self.first_card = None
+        self.score = 0
+        self.moves = 0
+
+        # Reset LEDs to dim white before starting sparkle
+        try:
+            if self.state_manager.led_manager:
+                # Clear any previous animations
+                self.state_manager.led_manager.background_animation = None
+                self.state_manager.led_manager.foreground_animation = None
+                # Set dim white (30% brightness of full white)
+                dim_white = (77, 77, 77)
+                self.state_manager.led_manager.set_all(dim_white)
+                await asyncio.sleep(0.2)  # Brief pause to ensure it's set
+        except Exception as e:
+            logger.debug(f"Failed to reset LEDs: {e}")
+
+        # Set Sparkle LED animation for background
+        try:
+            from adafruit_led_animation.animation.sparkle import Sparkle
+            from adafruit_led_animation.color import WHITE
+
+            if self.state_manager.led_manager:
+                sparkle = Sparkle(
+                    self.state_manager.led_manager.pixels,
+                    speed=1.0,  # 1s interval
+                    color=WHITE,
+                    num_sparkles=1
+                )
+                self.device.set_background_led_animation(sparkle)
+                logger.debug("Sparkle LED animation set for memory game")
+        except Exception as e:
+            logger.debug(f"Failed to set Sparkle animation: {e}")
 
         # Load tile images from module assets
         # Use tile_set_01 by default, can be made configurable later
@@ -119,20 +158,33 @@ class MemoryGameScene(BaseScene):
             if event is None:
                 continue
 
+            # Handle long press on release events (long_press flag only set on release)
+            if not event.is_pressed and event.long_press:
+                if event.row == 2 and event.col == 4:
+                    logger.info("Exit requested (long press)")
+                    self.switch_scene(ModuleLaunchScene)
+                    return
+                continue
+
+            # Skip other release events (we only care about presses)
             if not event.is_pressed:
                 continue
 
-            # Handle exit (long press bottom-right)
+            # Handle back button (short press)
             if event.row == 2 and event.col == 4:
-                if event.long_press:
-                    logger.info("Exit requested")
+                # Short press: restart game (or exit if game won)
+                if self.game_won:
+                    logger.info("Exit from victory screen")
                     self.switch_scene(ModuleLaunchScene)
                     return
                 else:
-                    # Short press: restart game
                     logger.info("Restart requested")
                     await self.on_exit()
                     await self.on_enter()
+                continue
+
+            # If game is won, ignore other button presses
+            if self.game_won:
                 continue
 
             # Handle card tap
@@ -195,7 +247,11 @@ class MemoryGameScene(BaseScene):
             else:
                 # No match
                 logger.debug(f"No match: {self.first_card} and {idx}")
-                await asyncio.sleep(1.5)
+
+                # Play mismatch animation
+                await self._play_mismatch_animation()
+
+                await asyncio.sleep(0.5)  # Brief pause before hiding cards
 
                 # Hide both cards
                 first_row = self.first_card // 5
@@ -212,22 +268,59 @@ class MemoryGameScene(BaseScene):
         """Play card reveal animation."""
         await asyncio.sleep(0.2)
 
+    async def _reset_leds_to_dim_white(self) -> None:
+        """Reset all LEDs to dim white and clear foreground animations."""
+        try:
+            from adafruit_led_animation.animation.solid import Solid
+
+            if self.state_manager.led_manager:
+                # Set dim white (30% brightness of full white)
+                dim_white = (77, 77, 77)
+                # Use a brief Solid animation to properly reset within the animation system
+                solid = Solid(self.state_manager.led_manager.pixels, color=dim_white)
+                self.device.run_led_animation(solid, duration=0.3)
+                await asyncio.sleep(0.35)  # Wait for solid animation to complete
+        except Exception as e:
+            logger.debug(f"LED reset failed: {e}")
+
     async def _play_match_animation(self) -> None:
         """Play success animation for matched pair."""
         try:
             from adafruit_led_animation.animation.pulse import Pulse
             from adafruit_led_animation.color import GREEN
 
-            pulse = Pulse(self.device.led_manager.pixels, speed=0.05, color=GREEN, period=1)
-            self.device.run_led_animation(pulse, duration=1.0)
+            if self.state_manager.led_manager:
+                pulse = Pulse(self.state_manager.led_manager.pixels, speed=0.05, color=GREEN, period=1)
+                self.device.run_led_animation(pulse, duration=1.0)
+                await asyncio.sleep(1.1)  # Wait for animation to complete
         except Exception as e:
             logger.debug(f"LED animation failed: {e}")
 
-        await asyncio.sleep(0.5)
+        # Reset LEDs to dim white
+        await self._reset_leds_to_dim_white()
+
+    async def _play_mismatch_animation(self) -> None:
+        """Play animation for mismatched pair."""
+        try:
+            from adafruit_led_animation.animation.pulse import Pulse
+            from adafruit_led_animation.color import RED
+
+            if self.state_manager.led_manager:
+                pulse = Pulse(self.state_manager.led_manager.pixels, speed=0.05, color=RED, period=1)
+                self.device.run_led_animation(pulse, duration=0.8)
+                await asyncio.sleep(0.9)  # Wait for animation to complete
+        except Exception as e:
+            logger.debug(f"LED animation failed: {e}")
+
+        # Reset LEDs to dim white
+        await self._reset_leds_to_dim_white()
 
     async def _show_win_screen(self) -> None:
         """Display victory screen."""
         logger.info(f"Game won! Score: {self.score}, Moves: {self.moves}")
+
+        # Set game won flag
+        self.game_won = True
 
         # Show celebration
         for row in range(3):
@@ -236,21 +329,24 @@ class MemoryGameScene(BaseScene):
                     continue
                 self.set_tile_text(row, col, "★", font_size=48, bg_color="gold")
 
+        # Keep back button visible
+        self.set_tile_text(2, 4, "←", font_size=48, fg_color="yellow")
+
         self.submit_tiles()
 
-        # Play victory animation
+        # Set continuous rainbow animation as background
         try:
             from adafruit_led_animation.animation.rainbow import Rainbow
 
-            rainbow = Rainbow(self.device.led_manager.pixels, speed=0.1, period=2)
-            self.device.run_led_animation(rainbow, duration=3.0)
-        except Exception:
-            pass
+            if self.state_manager.led_manager:
+                rainbow = Rainbow(self.state_manager.led_manager.pixels, speed=0.1, period=2)
+                self.device.set_background_led_animation(rainbow)
+                logger.debug("Rainbow LED animation set for victory screen (continuous)")
+        except Exception as e:
+            logger.debug(f"Failed to set rainbow animation: {e}")
 
-        await asyncio.sleep(3)
-
-        # Return to launcher
-        self.switch_scene(ModuleLaunchScene)
+        # Don't automatically return - wait for user to press back button
+        logger.info("Victory! Press back button to return to menu")
 
     async def on_exit(self) -> None:
         """Cleanup on exit."""

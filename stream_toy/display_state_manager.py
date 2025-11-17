@@ -42,7 +42,7 @@ class DisplayStateManager:
 
         logger.info("DisplayStateManager initialized")
 
-    def initialize_led_manager(self, pin=None, num_leds: int = 90, brightness: float = 0.5, pixel_order=None) -> None:
+    def initialize_led_manager(self, pin=None, num_leds: int = 90, brightness: float = 0.2, pixel_order=None) -> None:
         """
         Initialize the central LED manager.
 

@@ -199,8 +199,9 @@ class ReactionGameScene(BaseScene):
             from adafruit_led_animation.animation.pulse import Pulse
             from adafruit_led_animation.color import GREEN
 
-            pulse = Pulse(self.device.led_manager.pixels, speed=0.1, color=GREEN, period=0.5)
-            self.device.run_led_animation(pulse, duration=0.5)
+            if self.state_manager.led_manager:
+                pulse = Pulse(self.state_manager.led_manager.pixels, speed=0.1, color=GREEN, period=0.5)
+                self.device.run_led_animation(pulse, duration=0.5)
         except Exception as e:
             logger.debug(f"LED animation failed: {e}")
 
@@ -280,8 +281,9 @@ class ReactionGameScene(BaseScene):
         try:
             from adafruit_led_animation.animation.rainbow import Rainbow
 
-            rainbow = Rainbow(self.device.led_manager.pixels, speed=0.1, period=2)
-            self.device.run_led_animation(rainbow, duration=2.0)
+            if self.state_manager.led_manager:
+                rainbow = Rainbow(self.state_manager.led_manager.pixels, speed=0.1, period=2)
+                self.device.run_led_animation(rainbow, duration=2.0)
         except Exception:
             pass
 
