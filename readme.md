@@ -36,7 +36,8 @@ The Activity LED is connected via a 10k resistor so it just glows a bit. I used 
 Install the ARM64 lite Pi OS package.
 
 ```shell
-apt install -y libudev-dev libusb-1.0-0-dev libhidapi-libusb0 python3-dev python3-pil python3-pyudev libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon0 mpg123 portaudio19-dev python3-pyaudio
+apt install -y libudev-dev libusb-1.0-0-dev libhidapi-libusb0 python3-dev python3-pil python3-pyudev libegl1 libgl1 \
+  libopengl0 libxcb-cursor0 libxkbcommon0 mpg123 portaudio19-dev python3-pyaudio ffmpeg 
 ```
 
 On **Raspberry Pi OS Bookworm and later**, the config file lives at

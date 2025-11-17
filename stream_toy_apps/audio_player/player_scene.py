@@ -8,9 +8,11 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 import logging
+import time
 
 from stream_toy.scene.base_scene import BaseScene
 from stream_toy.sound_manager import PlaybackStatus
+from stream_toy.audio_metadata_service import AudioMetadataService
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,10 @@ class PlayerScene(BaseScene):
         # Track which static tiles have been initialized
         self._static_tiles_initialized = False
 
+        # Metadata service for position tracking
+        self.metadata = AudioMetadataService.get_metadata(audio_file)
+        self._last_position_save = 0  # Timestamp of last position save
+
     async def on_enter(self):
         """Initialize the scene and start playback."""
         logger.info(f"Entering Player Scene for {self.audio_file.name}")
@@ -88,8 +94,18 @@ class PlayerScene(BaseScene):
         sound_mgr.set_status_callback(self.on_status_change)
         sound_mgr.set_position_callback(self.on_position_update)
 
-        # Start playback
-        sound_mgr.play_music(self.audio_file, volume=self.current_volume)
+        # Update last play time in metadata
+        self.metadata.set_last_play_time()
+
+        # Resume from saved position if available
+        saved_position = self.metadata.get_playback_position()
+        start_pos = 0.0
+        if saved_position is not None and saved_position > 0:
+            start_pos = saved_position
+            logger.info(f"Resuming playback from saved position: {saved_position:.1f}s")
+
+        # Start playback (with resume position if available)
+        sound_mgr.play_music(self.audio_file, volume=self.current_volume, start_pos=start_pos)
 
         # Render UI
         await self.render_ui()
@@ -109,9 +125,16 @@ class PlayerScene(BaseScene):
             except asyncio.CancelledError:
                 pass
 
-        # Clear callbacks (but don't stop playback - let browser scene handle that)
+        # Save current position before exiting (if still playing or paused)
         sound_mgr = self.runtime.device.sound_manager
         if sound_mgr:
+            status = sound_mgr.get_status()
+            if status in (PlaybackStatus.PLAYING, PlaybackStatus.PAUSED):
+                position = sound_mgr.get_position()
+                self.metadata.set_playback_position(position)
+                logger.info(f"Saved playback position on exit: {position:.1f}s")
+
+            # Clear callbacks (but don't stop playback - let browser scene handle that)
             sound_mgr.set_status_callback(None)
             sound_mgr.set_position_callback(None)
 
@@ -267,6 +290,14 @@ class PlayerScene(BaseScene):
                     last_position = position
                     last_status = status
 
+                # Save playback position every 30 seconds (only if playing)
+                current_time = time.time()
+                if status == PlaybackStatus.PLAYING:
+                    if current_time - self._last_position_save >= 30:
+                        self.metadata.set_playback_position(position)
+                        self._last_position_save = current_time
+                        logger.debug(f"Saved playback position: {position:.1f}s")
+
                 await asyncio.sleep(1.0)  # Check once per second (time only changes every second)
             except asyncio.CancelledError:
                 break
@@ -277,6 +308,19 @@ class PlayerScene(BaseScene):
     def on_status_change(self, status: PlaybackStatus):
         """Handle playback status changes."""
         logger.debug(f"Playback status changed: {status}")
+
+        # If playback stopped at the end, clear saved position
+        if status == PlaybackStatus.STOPPED:
+            sound_mgr = self.runtime.device.sound_manager
+            if sound_mgr:
+                position = sound_mgr.get_position()
+                duration = sound_mgr.get_duration()
+
+                # If we're at the end (within 1 second), clear the position
+                if duration > 0 and position >= duration - 1.0:
+                    logger.info("Playback finished - clearing saved position")
+                    self.metadata.clear_playback_position()
+
         # Note: We don't auto-exit when playback finishes.
         # User can replay or manually go back.
 
