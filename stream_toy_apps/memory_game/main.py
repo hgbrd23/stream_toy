@@ -234,7 +234,7 @@ class MemoryGameScene(BaseScene):
             for col in range(5):
                 if row == 2 and col == 4:
                     continue
-                self.set_tile_text(row, col, "🎉", font_size=48, bg_color="gold")
+                self.set_tile_text(row, col, "★", font_size=48, bg_color="gold")
 
         self.submit_tiles()
 

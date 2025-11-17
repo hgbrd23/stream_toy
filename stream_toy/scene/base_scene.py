@@ -151,38 +151,31 @@ class BaseScene(ABC):
         """
         global _FONT_CACHE
 
-        # Check cache first
-        noto_dir = Path(__file__).parent.parent.parent / "assets" / "fonts" / "Noto_Sans"
-        font_path = str(noto_dir / "NotoSans-Bold.ttf")
+        fonts_dir = Path(__file__).parent.parent.parent / "assets" / "fonts"
 
+        # Use DejaVuSansMono Nerd Font which has excellent Unicode coverage including symbols and icons
+        font_path = str(fonts_dir / "DejaVuSansMNerdFont-Bold.ttf")
         cache_key = (font_path, font_size)
+
         if cache_key in _FONT_CACHE:
             return _FONT_CACHE[cache_key]
 
-        # Not in cache, load font
-        font_paths = [
-            str(noto_dir / "NotoSans-Bold.ttf"),
-            str(noto_dir / "NotoSans-Regular.ttf"),
-            str(noto_dir / "NotoSans-Medium.ttf"),
-        ]
+        # Load the Nerd Font
+        if os.path.exists(font_path):
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                _FONT_CACHE[cache_key] = font
+                logger.info(f"Loaded and cached font: {font_path} size {font_size}")
+                logger.info(f"Font object: {font}, path exists: {os.path.exists(font_path)}")
+                return font
+            except Exception as e:
+                logger.error(f"Failed to load DejaVuSansMono Nerd Font: {e}", exc_info=True)
+        else:
+            logger.error(f"Font file not found at: {font_path}")
 
-        font = None
-        for path in font_paths:
-            if os.path.exists(path):
-                try:
-                    font = ImageFont.truetype(path, font_size)
-                    cache_key = (path, font_size)
-                    _FONT_CACHE[cache_key] = font
-                    logger.debug(f"Loaded and cached font: {Path(path).name} size {font_size}")
-                    return font
-                except Exception:
-                    continue
-
-        # Fallback to default font
-        if font is None:
-            font = ImageFont.load_default()
-            logger.warning("Using default font, Noto Sans fonts not found")
-
+        # Fallback to default font if Nerd Font not available
+        font = ImageFont.load_default()
+        logger.warning("Using default font, DejaVuSansMono Nerd Font not found")
         return font
 
     def set_tile_text(
@@ -461,28 +454,8 @@ class BaseScene(ABC):
         # Draw text on top
         draw = ImageDraw.Draw(img)
 
-        # Load font
-        # Use Noto Sans fonts which have excellent Unicode/emoji support
-        font = None
-        # Path relative to this file: /workspace/stream_toy/scene/base_scene.py
-        # Fonts are at: /workspace/assets/fonts/Noto_Sans/
-        noto_dir = Path(__file__).parent.parent.parent / "assets" / "fonts" / "Noto_Sans"
-        font_paths = [
-            str(noto_dir / "NotoSans-Bold.ttf"),
-            str(noto_dir / "NotoSans-Regular.ttf"),
-            str(noto_dir / "NotoSans-Medium.ttf"),
-        ]
-
-        for font_path in font_paths:
-            if os.path.exists(font_path):
-                try:
-                    font = ImageFont.truetype(font_path, font_size)
-                    break
-                except Exception:
-                    continue
-
-        if font is None:
-            font = ImageFont.load_default()
+        # Load font using the same method as set_tile_text
+        font = self._get_font(font_size)
 
         # Wrap text if needed
         max_width = int(self.device.TILE_SIZE * 0.9)
