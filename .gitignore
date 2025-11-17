@@ -16,3 +16,4 @@ Thumbs.db
 /.claude/
 /.claude-profile/
 /data/cache/
+/data/audio_player/**/*

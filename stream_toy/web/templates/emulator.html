@@ -176,6 +176,28 @@
         #status.disconnected {
             color: #ff4444;
         }
+
+        #nav-links {
+            text-align: center;
+            margin-top: 15px;
+        }
+
+        #nav-links a {
+            display: inline-block;
+            margin: 0 10px;
+            padding: 8px 16px;
+            background: #2a2a3e;
+            color: #00d9ff;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        #nav-links a:hover {
+            background: #3a3a4e;
+            box-shadow: 0 0 10px rgba(0, 217, 255, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -201,6 +223,10 @@
         </div>
 
         <div id="status" class="disconnected">Connecting...</div>
+
+        <div id="nav-links">
+            <a href="/youtube-downloader">YouTube Downloader</a>
+        </div>
     </div>
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>

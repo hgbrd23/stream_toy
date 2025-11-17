@@ -4,12 +4,16 @@ Web server for StreamToy emulator.
 Provides Flask + Socket.IO server for real-time device emulation.
 """
 
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 import base64
 from io import BytesIO
 import logging
 from typing import Optional, List, Tuple
+from pathlib import Path
+import subprocess
+import json
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +123,216 @@ def emit_led_update(led_data: List[Tuple[int, int, int]]) -> None:
         led_data: List of (R, G, B) tuples
     """
     socketio.emit('led_update', {'leds': led_data})
+
+
+# YouTube Downloader Routes
+
+@app.route('/youtube-downloader')
+def youtube_downloader():
+    """Serve YouTube downloader page."""
+    return render_template('youtube_downloader.html')
+
+
+@app.route('/api/youtube/title', methods=['POST'])
+def get_youtube_title():
+    """Get video title from YouTube URL."""
+    try:
+        data = request.get_json()
+        url = data.get('url', '').strip()
+
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+
+        # Use yt-dlp to get video title (much faster than --dump-json)
+        # --no-playlist ensures we only get the single video, not the entire playlist
+        result = subprocess.run(
+            ['yt-dlp', '--print', '%(title)s', '--no-warnings', '--no-playlist', url],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() if result.stderr else 'Failed to fetch video information'
+            logger.error(f"yt-dlp error: {error_msg}")
+            return jsonify({'error': 'Failed to fetch video information'}), 400
+
+        title = result.stdout.strip()
+        if not title:
+            return jsonify({'error': 'No title found'}), 400
+
+        return jsonify({'title': title})
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"yt-dlp timeout for URL: {url}")
+        return jsonify({'error': 'Request timed out - YouTube may be slow or unreachable'}), 408
+    except Exception as e:
+        logger.error(f"Error fetching YouTube title: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/audio/list', methods=['POST'])
+def list_audio_files():
+    """List audio files in a directory."""
+    try:
+        data = request.get_json()
+        current_path = data.get('path', 'data/audio_player')
+
+        # Ensure path is relative to workspace root
+        base_path = Path('/workspace')
+        full_path = base_path / current_path
+
+        # Security: prevent directory traversal
+        try:
+            full_path = full_path.resolve()
+            if not str(full_path).startswith(str(base_path)):
+                return jsonify({'error': 'Invalid path'}), 403
+        except Exception:
+            return jsonify({'error': 'Invalid path'}), 403
+
+        if not full_path.exists():
+            return jsonify({'error': 'Directory does not exist'}), 404
+
+        if not full_path.is_dir():
+            return jsonify({'error': 'Path is not a directory'}), 400
+
+        # Audio file extensions
+        audio_extensions = {'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma'}
+
+        items = []
+
+        # List directories
+        for item in sorted(full_path.iterdir()):
+            if item.is_dir():
+                items.append({
+                    'name': item.name,
+                    'type': 'directory',
+                    'path': str(item.relative_to(base_path))
+                })
+
+        # List audio files
+        for item in sorted(full_path.iterdir()):
+            if item.is_file() and item.suffix.lower() in audio_extensions:
+                items.append({
+                    'name': item.name,
+                    'type': 'file',
+                    'path': str(item.relative_to(base_path)),
+                    'size': item.stat().st_size
+                })
+
+        # Get parent path for breadcrumb
+        parent_path = None
+        if full_path != base_path / 'data' / 'audio_player':
+            parent = full_path.parent
+            if str(parent).startswith(str(base_path / 'data' / 'audio_player')):
+                parent_path = str(parent.relative_to(base_path))
+
+        return jsonify({
+            'items': items,
+            'current_path': str(full_path.relative_to(base_path)),
+            'parent_path': parent_path
+        })
+
+    except Exception as e:
+        logger.error(f"Error listing audio files: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@socketio.on('start_download')
+def handle_download(data):
+    """Handle YouTube download request."""
+    try:
+        url = data.get('url', '').strip()
+        target_dir = data.get('target_dir', 'data/audio_player')
+
+        if not url:
+            emit('download_error', {'error': 'URL is required'})
+            return
+
+        # Ensure path is relative to workspace root
+        base_path = Path('/workspace')
+        full_target_dir = base_path / target_dir
+
+        # Security: prevent directory traversal
+        try:
+            full_target_dir = full_target_dir.resolve()
+            if not str(full_target_dir).startswith(str(base_path)):
+                emit('download_error', {'error': 'Invalid target directory'})
+                return
+        except Exception:
+            emit('download_error', {'error': 'Invalid target directory'})
+            return
+
+        # Create directory if it doesn't exist
+        full_target_dir.mkdir(parents=True, exist_ok=True)
+
+        # Start download in background thread
+        thread = threading.Thread(
+            target=_run_download,
+            args=(url, full_target_dir, request.sid)
+        )
+        thread.daemon = True
+        thread.start()
+
+        emit('download_started', {'message': 'Download started'})
+
+    except Exception as e:
+        logger.error(f"Error starting download: {e}")
+        emit('download_error', {'error': str(e)})
+
+
+def _run_download(url: str, target_dir: Path, client_sid: str):
+    """Run yt-dlp download and stream output to client."""
+    try:
+        # Run yt-dlp with progress output
+        # --no-playlist ensures we only download the single video, not the entire playlist
+        # --convert-thumbnails jpg converts webp and other formats to jpg for compatibility
+        process = subprocess.Popen(
+            [
+                'yt-dlp',
+                '--extract-audio',
+                '--audio-format', 'mp3',
+                '--write-thumbnail',
+                '--convert-thumbnails', 'jpg',
+                '--no-playlist',
+                '--newline',
+                '--progress',
+                url
+            ],
+            cwd=str(target_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+
+        # Stream output to client
+        for line in process.stdout:
+            line = line.strip()
+            if line:
+                socketio.emit('download_log', {'line': line}, room=client_sid)
+
+        process.wait()
+
+        if process.returncode == 0:
+            # Download succeeded - save metadata
+            from stream_toy.audio_metadata_service import AudioMetadataService
+
+            # Find the downloaded file (most recent mp3)
+            mp3_files = sorted(target_dir.glob('*.mp3'), key=lambda p: p.stat().st_mtime, reverse=True)
+            if mp3_files:
+                audio_file = mp3_files[0]
+                metadata = AudioMetadataService.get_metadata(audio_file)
+                metadata.set_download_info(url)
+                logger.info(f"Saved download metadata for {audio_file.name}")
+
+            socketio.emit('download_complete', {'message': 'Download completed successfully'}, room=client_sid)
+        else:
+            socketio.emit('download_error', {'error': f'Download failed with code {process.returncode}'}, room=client_sid)
+
+    except Exception as e:
+        logger.error(f"Error during download: {e}")
+        socketio.emit('download_error', {'error': str(e)}, room=client_sid)
 
 
 def run_server(host: str = '0.0.0.0', port: int = 5000) -> None:

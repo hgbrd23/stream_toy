@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Downloader</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2a2a3e 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #000;
+            border-radius: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #000;
+            color: #fff;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #00d9ff;
+        }
+
+        .header p {
+            color: #888;
+        }
+
+        .content {
+            padding: 30px;
+            background: #1a1a1a;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #00d9ff;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #00d9ff;
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        .input-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: #888;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #333;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            background: #000;
+            color: #fff;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #00d9ff;
+        }
+
+        .video-title {
+            padding: 12px;
+            background: #2a2a2a;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-style: italic;
+            color: #888;
+        }
+
+        .video-title.loaded {
+            background: #1a3a1a;
+            color: #00ff88;
+            font-style: normal;
+            font-weight: 500;
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 6px;
+        }
+
+        .breadcrumb-item {
+            cursor: pointer;
+            padding: 5px 10px;
+            border-radius: 4px;
+            color: #00d9ff;
+            transition: background 0.2s;
+        }
+
+        .breadcrumb-item:hover {
+            background: #3a3a3a;
+        }
+
+        .breadcrumb-separator {
+            margin: 0 5px;
+            color: #666;
+        }
+
+        .file-list {
+            border: 2px solid #333;
+            border-radius: 6px;
+            max-height: 300px;
+            overflow-y: auto;
+            background: #000;
+        }
+
+        .file-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid #2a2a2a;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #fff;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-item:hover {
+            background: #2a2a2a;
+        }
+
+        .file-item.selected {
+            background: rgba(0, 217, 255, 0.2);
+            border-left: 4px solid #00d9ff;
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+        }
+
+        .file-icon {
+            margin-right: 10px;
+            font-size: 20px;
+        }
+
+        .file-size {
+            color: #666;
+            font-size: 12px;
+            margin-left: auto;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: #00d9ff;
+            color: #000;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 217, 255, 0.4);
+            background: #00e5ff;
+        }
+
+        .btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .log-container {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            display: none;
+        }
+
+        .log-container.visible {
+            display: block;
+        }
+
+        .log-line {
+            margin-bottom: 3px;
+        }
+
+        .status-message {
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .status-message.visible {
+            display: block;
+        }
+
+        .status-message.success {
+            background: #1a3a1a;
+            color: #00ff88;
+            border-left: 4px solid #00ff88;
+        }
+
+        .status-message.error {
+            background: #3a1a1a;
+            color: #ff4444;
+            border-left: 4px solid #ff4444;
+        }
+
+        .status-message.info {
+            background: #1a2a3a;
+            color: #00d9ff;
+            border-left: 4px solid #00d9ff;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #333;
+            border-top: 2px solid #00d9ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .back-link {
+            display: inline-block;
+            margin: 15px 30px;
+            padding: 8px 16px;
+            background: #2a2a3e;
+            color: #00d9ff;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .back-link:hover {
+            background: #3a3a4e;
+            box-shadow: 0 0 10px rgba(0, 217, 255, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <a href="/" class="back-link">← Back to Emulator</a>
+    <div class="container">
+        <div class="header">
+            <h1>🎵 YouTube Music Downloader</h1>
+            <p>Download music from YouTube and save to your audio library</p>
+        </div>
+
+        <div class="content">
+            <!-- URL Input Section -->
+            <div class="section">
+                <div class="section-title">1. YouTube URL</div>
+                <div class="input-group">
+                    <label for="youtube-url">Paste YouTube URL:</label>
+                    <input type="text" id="youtube-url" placeholder="https://www.youtube.com/watch?v=...">
+                    <div id="video-title" class="video-title">Paste a URL to see the video title</div>
+                </div>
+            </div>
+
+            <!-- Directory Browser Section -->
+            <div class="section">
+                <div class="section-title">2. Select Download Location</div>
+                <div id="breadcrumb" class="breadcrumb"></div>
+                <div id="file-list" class="file-list"></div>
+            </div>
+
+            <!-- Download Button -->
+            <div class="section">
+                <div class="section-title">3. Start Download</div>
+                <button id="download-btn" class="btn btn-primary" disabled>
+                    Start Download
+                </button>
+                <div id="status-message" class="status-message"></div>
+            </div>
+
+            <!-- Download Log -->
+            <div class="section">
+                <div class="section-title">Download Log</div>
+                <div id="log-container" class="log-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Socket.IO connection
+        const socket = io();
+
+        // State
+        let currentPath = 'data/audio_player';
+        let selectedDirectory = 'data/audio_player';
+        let videoTitle = null;
+        let isDownloading = false;
+
+        // Elements
+        const urlInput = document.getElementById('youtube-url');
+        const videoTitleDiv = document.getElementById('video-title');
+        const breadcrumb = document.getElementById('breadcrumb');
+        const fileList = document.getElementById('file-list');
+        const downloadBtn = document.getElementById('download-btn');
+        const statusMessage = document.getElementById('status-message');
+        const logContainer = document.getElementById('log-container');
+
+        // URL input handler with debounce
+        let urlTimeout;
+        urlInput.addEventListener('input', (e) => {
+            clearTimeout(urlTimeout);
+            const url = e.target.value.trim();
+
+            if (!url) {
+                videoTitleDiv.textContent = 'Paste a URL to see the video title';
+                videoTitleDiv.classList.remove('loaded');
+                updateDownloadButton();
+                return;
+            }
+
+            videoTitleDiv.innerHTML = 'Loading title...<span class="loading"></span>';
+            videoTitleDiv.classList.remove('loaded');
+
+            urlTimeout = setTimeout(() => {
+                fetchVideoTitle(url);
+            }, 500);
+        });
+
+        // Fetch video title
+        async function fetchVideoTitle(url) {
+            try {
+                const response = await fetch('/api/youtube/title', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    videoTitle = data.title;
+                    videoTitleDiv.textContent = videoTitle;
+                    videoTitleDiv.classList.add('loaded');
+                } else {
+                    videoTitleDiv.textContent = `Error: ${data.error}`;
+                    videoTitleDiv.classList.remove('loaded');
+                    videoTitle = null;
+                }
+            } catch (error) {
+                videoTitleDiv.textContent = `Error: ${error.message}`;
+                videoTitleDiv.classList.remove('loaded');
+                videoTitle = null;
+            }
+
+            updateDownloadButton();
+        }
+
+        // Load directory listing
+        async function loadDirectory(path) {
+            try {
+                const response = await fetch('/api/audio/list', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    currentPath = data.current_path;
+                    renderBreadcrumb(data.parent_path);
+                    renderFileList(data.items);
+                } else {
+                    showStatus(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Render breadcrumb
+        function renderBreadcrumb(parentPath) {
+            const parts = currentPath.split('/');
+            breadcrumb.innerHTML = '';
+
+            parts.forEach((part, index) => {
+                if (index > 0) {
+                    const separator = document.createElement('span');
+                    separator.className = 'breadcrumb-separator';
+                    separator.textContent = '/';
+                    breadcrumb.appendChild(separator);
+                }
+
+                const item = document.createElement('span');
+                item.className = 'breadcrumb-item';
+                item.textContent = part || 'root';
+
+                const itemPath = parts.slice(0, index + 1).join('/');
+                item.addEventListener('click', () => {
+                    loadDirectory(itemPath);
+                });
+
+                breadcrumb.appendChild(item);
+            });
+        }
+
+        // Render file list
+        function renderFileList(items) {
+            fileList.innerHTML = '';
+
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                if (item.path === selectedDirectory) {
+                    div.classList.add('selected');
+                }
+
+                const info = document.createElement('div');
+                info.className = 'file-info';
+
+                const icon = document.createElement('span');
+                icon.className = 'file-icon';
+                icon.textContent = item.type === 'directory' ? '📁' : '🎵';
+
+                const name = document.createElement('span');
+                name.textContent = item.name;
+
+                info.appendChild(icon);
+                info.appendChild(name);
+                div.appendChild(info);
+
+                if (item.type === 'file' && item.size) {
+                    const size = document.createElement('span');
+                    size.className = 'file-size';
+                    size.textContent = formatFileSize(item.size);
+                    div.appendChild(size);
+                }
+
+                if (item.type === 'directory') {
+                    div.addEventListener('click', () => {
+                        loadDirectory(item.path);
+                    });
+                }
+
+                // Allow selecting the current directory
+                div.addEventListener('dblclick', () => {
+                    if (item.type === 'directory') {
+                        selectedDirectory = item.path;
+                        renderFileList(items);
+                        updateDownloadButton();
+                    }
+                });
+
+                fileList.appendChild(div);
+            });
+
+            // Always allow selecting current directory
+            selectedDirectory = currentPath;
+            updateDownloadButton();
+        }
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        // Update download button state
+        function updateDownloadButton() {
+            const hasUrl = urlInput.value.trim() !== '';
+            const hasTitle = videoTitle !== null;
+            const hasDirectory = selectedDirectory !== null;
+
+            downloadBtn.disabled = !hasUrl || !hasTitle || !hasDirectory || isDownloading;
+        }
+
+        // Show status message
+        function showStatus(message, type) {
+            statusMessage.textContent = message;
+            statusMessage.className = `status-message visible ${type}`;
+        }
+
+        // Download button handler
+        downloadBtn.addEventListener('click', () => {
+            const url = urlInput.value.trim();
+            if (!url || !selectedDirectory) return;
+
+            isDownloading = true;
+            updateDownloadButton();
+            logContainer.innerHTML = '';
+            logContainer.classList.add('visible');
+            showStatus('Starting download...', 'info');
+
+            socket.emit('start_download', {
+                url: url,
+                target_dir: selectedDirectory
+            });
+        });
+
+        // Socket.IO event handlers
+        socket.on('download_started', (data) => {
+            showStatus(data.message, 'info');
+            addLogLine('Download started...');
+        });
+
+        socket.on('download_log', (data) => {
+            addLogLine(data.line);
+        });
+
+        socket.on('download_complete', (data) => {
+            isDownloading = false;
+            updateDownloadButton();
+            showStatus(data.message, 'success');
+            addLogLine('\n=== Download completed successfully! ===');
+            // Refresh file list
+            loadDirectory(currentPath);
+        });
+
+        socket.on('download_error', (data) => {
+            isDownloading = false;
+            updateDownloadButton();
+            showStatus(`Error: ${data.error}`, 'error');
+            addLogLine(`\n=== ERROR: ${data.error} ===`);
+        });
+
+        // Add line to log
+        function addLogLine(text) {
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            line.textContent = text;
+            logContainer.appendChild(line);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // Initialize
+        loadDirectory(currentPath);
+    </script>
+</body>
+</html>

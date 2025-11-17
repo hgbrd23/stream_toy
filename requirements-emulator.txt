@@ -7,3 +7,6 @@ PyYAML>=6.0
 
 # Optional: SVG rendering
 # cairosvg>=2.7
+
+# For downloading audio from Youtube
+yt-dlp[default]
