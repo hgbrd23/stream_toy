@@ -22,7 +22,7 @@ class LEDManager:
     - Foreground: Temporary animations that pause background
     """
 
-    def __init__(self, pin=None, num_leds: int = 90, brightness: float = 0.5, pixel_order=None):
+    def __init__(self, pin=None, num_leds: int = 90, brightness: float = 0.1, pixel_order=None):
         """
         Initialize LED manager.
 

@@ -36,9 +36,9 @@ class ModuleLaunchScene(MenuScene):
     async def on_enter(self) -> None:
         """Initialize LED animation and menu."""
         # Set Sparkle LED animation for main menu
-        if SPARKLE_AVAILABLE:
+        if SPARKLE_AVAILABLE and self.state_manager.led_manager:
             try:
-                sparkle = Sparkle(self.device.led_manager.pixels, speed=0.5, color=WHITE, num_sparkles=1)
+                sparkle = Sparkle(self.state_manager.led_manager.pixels, speed=0.5, color=WHITE, num_sparkles=1)
                 self.device.set_background_led_animation(sparkle)
                 logger.debug("Sparkle LED animation set for main menu")
             except Exception as e:
