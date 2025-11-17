@@ -14,7 +14,6 @@ from PIL import Image
 import logging
 
 from .stream_toy_device import StreamToyDevice
-from ..led_manager import LEDManager
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +103,6 @@ class StreamDock293V3Device(StreamToyDevice):
         # Display tile manager for tracking what's currently shown
         self._display_manager = DisplayTileManager()
 
-        # LED Manager (GPIO 10)
-        try:
-            import board
-            self.led_manager = LEDManager(pin=board.D10, num_leds=90, brightness=0.1)
-        except Exception as e:
-            logger.warning(f"Failed to initialize LED manager with real hardware: {e}")
-            # Fall back to fake mode
-            self.led_manager = LEDManager(pin=None, num_leds=90, brightness=0.1)
-
         # Ensure cache directory exists
         self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -165,9 +155,6 @@ class StreamDock293V3Device(StreamToyDevice):
 
             # Wait for initial refresh
             time.sleep(1)
-
-            # Start LED manager
-            self.led_manager.start()
 
             self._initialized = True
             logger.info("StreamDock 293V3 device initialized successfully")
@@ -283,15 +270,25 @@ class StreamDock293V3Device(StreamToyDevice):
         Custom read loop that directly calls transport.read_() to get key events.
         This bypasses the SDK's broken read thread.
         """
-        logger.info("Custom read loop started")
+        logger.info("Custom read loop started - thread is RUNNING")
+        logger.info(f"Initial callback state: {self._key_callback}")
 
         # Import KEY_MAPPING from SDK
         from StreamDock.Devices.StreamDock import KEY_MAPPING
 
+        loop_count = 0
         while self._read_running:
+            loop_count += 1
+            if loop_count % 1000 == 0:
+                logger.debug(f"Read loop alive - iteration {loop_count}, callback={self._key_callback is not None}")
             try:
                 # Call transport.read_() directly - returns tuple or None
-                result = self.sdk_device.transport.read_(13)
+                try:
+                    result = self.sdk_device.transport.read_(13)
+                except Exception as read_error:
+                    logger.error(f"Error calling transport.read_(): {read_error}", exc_info=True)
+                    time.sleep(0.1)
+                    continue
 
                 if result is None:
                     time.sleep(0.005)  # Small delay (5ms) to avoid busy loop
@@ -308,6 +305,8 @@ class StreamDock293V3Device(StreamToyDevice):
 
                 # Check for button event (key is valid and not 0xFF)
                 if key != 0xFF and 1 <= key <= 15:
+                    logger.info(f"RAW BUTTON EVENT DETECTED: key={key}, status={status}, result_bytes={result_bytes.hex()}")
+
                     # Map the raw key index through KEY_MAPPING to get logical button
                     # The SDK applies KEY_MAPPING to invert rows
                     mapped_key = KEY_MAPPING[key]
@@ -324,14 +323,16 @@ class StreamDock293V3Device(StreamToyDevice):
 
                         # Call registered callback
                         callback = self._key_callback
+                        logger.info(f"Calling callback: {callback}")
                         if callback is not None:
                             try:
+                                logger.info(f"Invoking callback with: row={row}, col={col}, is_pressed={is_pressed}")
                                 callback(row, col, is_pressed)
-                                logger.info(f"Callback executed: ({row},{col}) pressed={is_pressed}")
+                                logger.info(f"Callback executed successfully: ({row},{col}) pressed={is_pressed}")
                             except Exception as e:
                                 logger.error(f"Callback error: {e}", exc_info=True)
                         else:
-                            logger.debug("Event received but no callback registered yet")
+                            logger.warning(f"Event received but no callback registered yet! Button ({row},{col})")
                     else:
                         logger.warning(f"Unknown mapped button index: {mapped_key}")
 
@@ -387,9 +388,6 @@ class StreamDock293V3Device(StreamToyDevice):
                 self._read_thread.join(timeout=2.0)
             logger.info("Custom read thread stopped")
 
-        # Stop LED manager
-        self.led_manager.stop()
-
         # Close SDK device
         if self.sdk_device:
             try:
@@ -432,8 +430,8 @@ class StreamDock293V3Device(StreamToyDevice):
         # Queue the image path with cache_key
         self._tile_queue[(row, col)] = (image_path, cache_key or "")
 
-    def submit(self) -> None:
-        """Send all queued tile changes to device."""
+    def submit_tiles(self) -> None:
+        """Flush queued tile updates to device hardware."""
         if not self._tile_queue:
             logger.debug("No tiles to submit")
             return
@@ -507,13 +505,18 @@ class StreamDock293V3Device(StreamToyDevice):
             logger.debug(f"Submitted {num_tiles} tile update(s)")
 
         except Exception as e:
-            logger.error(f"Error in submit: {e}", exc_info=True)
+            logger.error(f"Error in submit_tiles: {e}", exc_info=True)
             raise
 
-    def set_background_led_animation(self, animation) -> None:
-        """Set the idle LED animation."""
-        self.led_manager.set_background_animation(animation)
+    def _on_state_tile_update(self, row: int, col: int, image_path: Union[str, Path], cache_key: str) -> None:
+        """
+        Callback from central state manager when a tile is updated.
 
-    def run_led_animation(self, animation, duration: Optional[float] = None) -> None:
-        """Run a foreground LED animation."""
-        self.led_manager.run_animation(animation, duration)
+        Args:
+            row: Tile row (0-2)
+            col: Tile column (0-4)
+            image_path: Path to image file
+            cache_key: Cache key for tracking
+        """
+        # Queue the tile update locally
+        self.set_tile(row, col, image_path, cache_key)

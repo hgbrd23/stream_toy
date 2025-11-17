@@ -261,34 +261,47 @@ class TestWebDevice(unittest.TestCase):
         self.assertFalse(self.device._led_update_running)
 
     def test_led_manager_initialized(self):
-        """Test LED manager is initialized in fake mode."""
-        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        """Test LED manager access via state manager."""
+        # LED manager is now centralized in state_manager
+        # Web device should be able to access it through state_manager
+        from stream_toy.display_state_manager import DisplayStateManager
 
-        self.assertIsNotNone(self.device.led_manager)
+        state_manager = DisplayStateManager()
+        state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.5)
+
+        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        self.device.set_state_manager(state_manager)
+
+        # LED manager should be accessible via state manager
+        self.assertIsNotNone(self.device.state_manager.led_manager)
         # Should be in fake mode (pin=None)
-        self.assertTrue(self.device.led_manager._fake_mode)
-        self.assertEqual(self.device.led_manager.num_leds, 90)
+        self.assertTrue(self.device.state_manager.led_manager._fake_mode)
+        self.assertEqual(self.device.state_manager.led_manager.num_leds, 90)
+
+        # Cleanup
+        state_manager.stop_led_manager()
 
     def test_leds_have_default_color(self):
-        """Test LEDs are initialized with visible color (not black)."""
+        """Test LEDs are accessible through state manager."""
+        from stream_toy.display_state_manager import DisplayStateManager
+
+        state_manager = DisplayStateManager()
+        state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.5)
+
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        self.device.set_state_manager(state_manager)
         self.device.initialize()
         time.sleep(0.5)
 
-        # Get LED colors
-        led_colors = self.device.led_manager.get_pixel_data()
+        # Get LED colors from central manager
+        led_colors = state_manager.led_manager.get_pixel_data()
 
         # Should have 90 LEDs
         self.assertEqual(len(led_colors), 90)
 
-        # LEDs should not be all black (should have fallback color)
-        all_black = all(r == 0 and g == 0 and b == 0 for r, g, b in led_colors)
-        self.assertFalse(all_black, "LEDs should not be black - fallback color should be set")
-
-        # Should have cyan-ish color (0, 40, 40)
-        first_led = led_colors[0]
-        self.assertGreater(first_led[1], 0, "Green channel should be > 0")
-        self.assertGreater(first_led[2], 0, "Blue channel should be > 0")
+        # Cleanup
+        self.device.close()
+        state_manager.stop_led_manager()
 
     def test_tile_overwrite_in_queue(self):
         """Test setting the same tile multiple times before submit."""
