@@ -42,11 +42,31 @@ class MockInputManager:
     pass
 
 
+class MockStateManager:
+    """Mock state manager for testing."""
+    def __init__(self):
+        self.tile_calls = []
+
+    def set_tile(self, row, col, path, cache_key=None):
+        """Track set_tile calls."""
+        self.tile_calls.append({
+            'row': row,
+            'col': col,
+            'path': path,
+            'cache_key': cache_key
+        })
+
+    def submit(self):
+        """Mock submit."""
+        pass
+
+
 class MockRuntime:
     """Mock runtime for testing."""
     def __init__(self, device):
         self.device = device
         self.input_manager = MockInputManager()
+        self.state_manager = MockStateManager()
 
 
 class TestScene(BaseScene):
@@ -151,21 +171,21 @@ class TestBaseSceneCache(unittest.TestCase):
         # First call - should generate and cache
         self.scene.set_tile_text(0, 0, "Hello", font_size=24)
 
-        # Verify device was called
-        self.assertEqual(len(self.device.tile_calls), 1)
-        first_call = self.device.tile_calls[0]
+        # Verify state manager was called
+        self.assertEqual(len(self.runtime.state_manager.tile_calls), 1)
+        first_call = self.runtime.state_manager.tile_calls[0]
 
         # Verify cache file was created
         cache_path = Path(first_call['path'])
         self.assertTrue(cache_path.exists())
 
         # Second call with same parameters - should use cache
-        self.device.tile_calls.clear()
+        self.runtime.state_manager.tile_calls.clear()
         self.scene.set_tile_text(0, 0, "Hello", font_size=24)
 
-        # Verify device was called again (but should use same cached file)
-        self.assertEqual(len(self.device.tile_calls), 1)
-        second_call = self.device.tile_calls[0]
+        # Verify state manager was called again (but should use same cached file)
+        self.assertEqual(len(self.runtime.state_manager.tile_calls), 1)
+        second_call = self.runtime.state_manager.tile_calls[0]
 
         # Should use same cached file path
         self.assertEqual(first_call['path'], second_call['path'])
@@ -175,12 +195,12 @@ class TestBaseSceneCache(unittest.TestCase):
         """Test that different parameters create different cache entries."""
         # Call with first parameters
         self.scene.set_tile_text(0, 0, "Hello", font_size=24, fg_color="white")
-        first_path = self.device.tile_calls[0]['path']
+        first_path = self.runtime.state_manager.tile_calls[0]['path']
 
         # Call with different parameters
-        self.device.tile_calls.clear()
+        self.runtime.state_manager.tile_calls.clear()
         self.scene.set_tile_text(0, 0, "Hello", font_size=32, fg_color="white")
-        second_path = self.device.tile_calls[0]['path']
+        second_path = self.runtime.state_manager.tile_calls[0]['path']
 
         # Should create different cache files
         self.assertNotEqual(first_path, second_path)
@@ -199,9 +219,9 @@ class TestBaseSceneCache(unittest.TestCase):
         # Call set_tile_file
         self.scene.set_tile_file(0, 0, str(temp_img_path))
 
-        # Verify device was called with the path
-        self.assertEqual(len(self.device.tile_calls), 1)
-        call = self.device.tile_calls[0]
+        # Verify state manager was called with the path
+        self.assertEqual(len(self.runtime.state_manager.tile_calls), 1)
+        call = self.runtime.state_manager.tile_calls[0]
 
         # Should pass the original file path (as string or Path)
         self.assertEqual(str(call['path']), str(temp_img_path))
@@ -210,20 +230,20 @@ class TestBaseSceneCache(unittest.TestCase):
         """Test that clear_tile uses caching."""
         # Clear to black
         self.scene.clear_tile(0, 0, "black")
-        first_path = self.device.tile_calls[0]['path']
+        first_path = self.runtime.state_manager.tile_calls[0]['path']
 
         # Clear another tile to black
-        self.device.tile_calls.clear()
+        self.runtime.state_manager.tile_calls.clear()
         self.scene.clear_tile(1, 1, "black")
-        second_path = self.device.tile_calls[0]['path']
+        second_path = self.runtime.state_manager.tile_calls[0]['path']
 
         # Should use same cached file
         self.assertEqual(first_path, second_path)
 
         # Clear to different color
-        self.device.tile_calls.clear()
+        self.runtime.state_manager.tile_calls.clear()
         self.scene.clear_tile(0, 0, "white")
-        third_path = self.device.tile_calls[0]['path']
+        third_path = self.runtime.state_manager.tile_calls[0]['path']
 
         # Should use different cached file
         self.assertNotEqual(first_path, third_path)

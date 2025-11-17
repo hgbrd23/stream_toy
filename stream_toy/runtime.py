@@ -19,6 +19,7 @@ from .module import StreamToyModule, load_module_manifest
 from .scene.base_scene import BaseScene
 from .scene.module_launch_scene import ModuleLaunchScene
 from .settings_manager import SettingsManager
+from .display_state_manager import DisplayStateManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +49,13 @@ class StreamToyRuntime:
         self.web_port = web_port
 
         self.devices: List[StreamToyDevice] = []
-        self.device: Optional[StreamToyDevice] = None  # Primary device
+        self.device: Optional[StreamToyDevice] = None  # Primary device (for compatibility)
         self.input_manager = InputManager()
         self.settings_manager = SettingsManager()
         self.modules: List[StreamToyModule] = []
+
+        # Central display state manager
+        self.state_manager = DisplayStateManager()
 
         self.current_scene: Optional[BaseScene] = None
         self.scene_stack: List[BaseScene] = []
@@ -70,6 +74,24 @@ class StreamToyRuntime:
         logger.info("Initializing StreamToy Runtime")
         logger.info(f"Hardware enabled: {self.enable_hardware}, Web enabled: {self.enable_web}")
 
+        # Initialize central LED manager
+        if self.enable_hardware:
+            # Use real hardware GPIO pin
+            try:
+                import board
+                self.state_manager.initialize_led_manager(pin=board.D10, num_leds=90, brightness=0.1)
+                logger.info("Central LED manager initialized with hardware GPIO")
+            except Exception as e:
+                logger.warning(f"Failed to initialize LED hardware, using fake mode: {e}")
+                self.state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.1)
+        else:
+            # Use fake mode for web-only
+            self.state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.5)
+            logger.info("Central LED manager initialized in fake mode")
+
+        # Set default LED animation
+        self._set_default_led_animation()
+
         # Initialize hardware device
         if self.enable_hardware:
             try:
@@ -78,6 +100,11 @@ class StreamToyRuntime:
                 hw_device.initialize()
                 hw_device.initialize_sound(sample_rate=48000, settings_manager=self.settings_manager)
                 hw_device.register_key_callback(self.input_manager.on_device_key_event)
+
+                # Set state manager reference and register as viewer
+                hw_device.set_state_manager(self.state_manager)
+                self.state_manager.register_viewer(hw_device._on_state_tile_update, device=hw_device)
+
                 self.devices.append(hw_device)
                 logger.info("Hardware device initialized successfully")
             except Exception as e:
@@ -93,6 +120,11 @@ class StreamToyRuntime:
                 web_device.initialize()
                 web_device.initialize_sound(sample_rate=48000, settings_manager=self.settings_manager)
                 web_device.register_key_callback(self.input_manager.on_device_key_event)
+
+                # Set state manager reference and register as viewer
+                web_device.set_state_manager(self.state_manager)
+                self.state_manager.register_viewer(web_device._on_state_tile_update, device=web_device)
+
                 self.devices.append(web_device)
                 logger.info(f"Web emulator initialized successfully at http://0.0.0.0:{self.web_port}")
             except Exception as e:
@@ -153,6 +185,21 @@ class StreamToyRuntime:
                 logger.error(f"Failed to load module {module_dir.name}: {e}", exc_info=True)
 
         logger.info(f"Loaded {module_count} module(s)")
+
+    def _set_default_led_animation(self) -> None:
+        """Set default rainbow background animation on central LED manager."""
+        try:
+            from adafruit_led_animation.animation.rainbow import Rainbow
+
+            rainbow = Rainbow(self.state_manager.led_manager.pixels, speed=0.05, period=5)
+            self.state_manager.set_background_led_animation(rainbow)
+            logger.info("Default rainbow LED animation set on central manager")
+        except Exception as e:
+            logger.warning(f"Failed to set default LED animation: {e}")
+            # Fallback: Set all LEDs to a dim cyan color
+            if self.state_manager.led_manager:
+                self.state_manager.led_manager.set_all((0, 40, 40))
+                logger.info("Using fallback: set LEDs to dim cyan")
 
     def get_available_modules(self) -> List[StreamToyModule]:
         """
@@ -286,6 +333,9 @@ class StreamToyRuntime:
 
         # Stop running
         self._running = False
+
+        # Stop central LED manager
+        self.state_manager.stop_led_manager()
 
         # Close all devices
         for device in self.devices:

@@ -40,11 +40,31 @@ class MockInputManager:
     pass
 
 
+class MockStateManager:
+    """Mock state manager for testing."""
+    def __init__(self):
+        self.tile_calls = []
+
+    def set_tile(self, row, col, path, cache_key=None):
+        """Track set_tile calls."""
+        self.tile_calls.append({
+            'row': row,
+            'col': col,
+            'path': path,
+            'cache_key': cache_key
+        })
+
+    def submit(self):
+        """Mock submit."""
+        pass
+
+
 class MockRuntime:
     """Mock runtime for testing."""
     def __init__(self, device):
         self.device = device
         self.input_manager = MockInputManager()
+        self.state_manager = MockStateManager()
 
 
 class TestScene(BaseScene):
@@ -157,7 +177,7 @@ class TestSceneOptimizations(unittest.TestCase):
         self.scene.set_tile_text(0, 0, "5:23", font_size=18)
 
         # Should complete without error and generate cached image
-        self.assertEqual(len(self.device.tile_calls), 1)
+        self.assertEqual(len(self.runtime.state_manager.tile_calls), 1)
 
         # Verify cache was created
         cache_key = "text|5:23|fs18|fgwhite|bgblack|wFalse|ts112"
@@ -170,7 +190,7 @@ class TestSceneOptimizations(unittest.TestCase):
                                 font_size=10, wrap=True)
 
         # Should complete without error
-        self.assertEqual(len(self.device.tile_calls), 1)
+        self.assertEqual(len(self.runtime.state_manager.tile_calls), 1)
 
         # Verify cache was created
         cache_key = "text|Long filename that needs wrapping|fs10|fgwhite|bgblack|wTrue|ts112"

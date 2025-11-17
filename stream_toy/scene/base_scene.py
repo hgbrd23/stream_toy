@@ -43,7 +43,8 @@ class BaseScene(ABC):
             runtime: Reference to the StreamToyRuntime instance
         """
         self.runtime = runtime
-        self.device = runtime.device
+        self.device = runtime.device  # For compatibility (TILE_SIZE, etc.)
+        self.state_manager = runtime.state_manager  # Central state manager
         self.input_manager = runtime.input_manager
         self._running = False
 
@@ -215,7 +216,7 @@ class BaseScene(ABC):
         if self._is_cached(cache_key):
             cache_path = self._get_cache_path(cache_key)
             logger.debug(f"Using cached text image: {cache_path.name}")
-            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+            self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
             return
 
         # Image not cached, generate it
@@ -301,9 +302,9 @@ class BaseScene(ABC):
             draw.text((x, y), line, fill=fg_color, font=font)
             y += line_height
 
-        # Cache the generated image to file and send path to device
+        # Cache the generated image to file and send path to central state
         cache_path = self._cache_image(cache_key, img)
-        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+        self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def set_tile_svg(self, row: int, col: int, svg_path: str) -> None:
         """
@@ -336,7 +337,7 @@ class BaseScene(ABC):
         if self._is_cached(cache_key):
             cache_path = self._get_cache_path(cache_key)
             logger.debug(f"Using cached SVG image: {cache_path.name}")
-            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+            self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
             return
 
         # Image not cached, generate it
@@ -347,9 +348,9 @@ class BaseScene(ABC):
         )
         img = Image.open(BytesIO(png_data))
 
-        # Cache the generated image to file and send path to device
+        # Cache the generated image to file and send path to central state
         cache_path = self._cache_image(cache_key, img)
-        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+        self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def set_tile_image(self, row: int, col: int, image: Image.Image) -> None:
         """
@@ -370,9 +371,9 @@ class BaseScene(ABC):
         img_hash = hashlib.md5(img_bytes).hexdigest()[:16]
         cache_key = f"img|{img_hash}|ts{self.device.TILE_SIZE}"
 
-        # Cache to file and send path to device
+        # Cache to file and send path to central state
         cache_path = self._cache_image(cache_key, image)
-        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+        self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def set_tile_file(self, row: int, col: int, image_path: str) -> None:
         """
@@ -392,8 +393,8 @@ class BaseScene(ABC):
         # Generate cache key from file path
         cache_key = f"file|{image_path}"
 
-        # Pass the file path directly to the device
-        self.device.set_tile(row, col, image_path, cache_key=cache_key)
+        # Pass the file path directly to central state
+        self.state_manager.set_tile(row, col, image_path, cache_key=cache_key)
 
     def set_tile_image_with_text(
         self,
@@ -431,7 +432,7 @@ class BaseScene(ABC):
         if self._is_cached(cache_key):
             cache_path = self._get_cache_path(cache_key)
             logger.debug(f"Using cached image+text: {cache_path.name}")
-            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+            self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
             return
 
         # Load and resize image
@@ -540,9 +541,9 @@ class BaseScene(ABC):
                 y = y_start + (i * line_height)
                 draw.text((x, y), line, fill=fg_color, font=font)
 
-        # Cache the generated image to file and send path to device
+        # Cache the generated image to file and send path to central state
         cache_path = self._cache_image(cache_key, img)
-        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+        self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def clear_tile(self, row: int, col: int, color: str = "black") -> None:
         """
@@ -560,13 +561,13 @@ class BaseScene(ABC):
         if self._is_cached(cache_key):
             cache_path = self._get_cache_path(cache_key)
             logger.debug(f"Using cached color tile: {cache_path.name}")
-            self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+            self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
             return
 
         # Generate and cache
         img = Image.new('RGB', (self.device.TILE_SIZE, self.device.TILE_SIZE), color)
         cache_path = self._cache_image(cache_key, img)
-        self.device.set_tile(row, col, cache_path, cache_key=cache_key)
+        self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
 
     def clear_all_tiles(self, color: str = "black") -> None:
         """
@@ -580,8 +581,8 @@ class BaseScene(ABC):
                 self.clear_tile(row, col, color)
 
     def submit_tiles(self) -> None:
-        """Submit all queued tile updates to device."""
-        self.device.submit()
+        """Submit all queued tile updates to all devices via central state."""
+        self.state_manager.submit()
 
     def switch_scene(self, scene_class: type, **kwargs) -> None:
         """

@@ -227,4 +227,4 @@ Use the venv in .venv-emulator with requirements-emulator.
 - When improving code, don't create a new version of anything. Refactor the existing one or create a new one and remove the old one.
 - Never use hardcoded paths. Always use a path relative to our modules.
 - Don't create test scripts. Write unittests in the tests directory.
-- 
+- You are running in a container and can't access ALSA or the physical device.

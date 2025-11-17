@@ -15,7 +15,6 @@ import logging
 import time
 
 from .stream_toy_device import StreamToyDevice
-from ..led_manager import LEDManager
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +42,6 @@ class WebDevice(StreamToyDevice):
         # Persistent tile cache for reconnecting clients (stores Images)
         self._tile_cache: Dict[Tuple[int, int], Image.Image] = {}
 
-        # LED Manager in fake mode (sends to browser)
-        self.led_manager = LEDManager(pin=None, num_leds=90, brightness=0.5)
-
         # LED update thread
         self._led_update_running = False
         self._led_update_thread: Optional[threading.Thread] = None
@@ -72,14 +68,8 @@ class WebDevice(StreamToyDevice):
             # Give server time to start
             time.sleep(1)
 
-            # Start LED manager
-            self.led_manager.start()
-
             # Start LED update pusher
             self._start_led_updates()
-
-            # Set default LED animation
-            self._set_default_led_animation()
 
             self._initialized = True
             logger.info(f"WebDevice initialized successfully at http://{self.host}:{self.port}")
@@ -87,20 +77,6 @@ class WebDevice(StreamToyDevice):
         except Exception as e:
             logger.error(f"Failed to initialize WebDevice: {e}", exc_info=True)
             raise RuntimeError(f"WebDevice initialization failed: {e}")
-
-    def _set_default_led_animation(self) -> None:
-        """Set default rainbow background animation."""
-        try:
-            from adafruit_led_animation.animation.rainbow import Rainbow
-
-            rainbow = Rainbow(self.led_manager.pixels, speed=0.05, period=5)
-            self.led_manager.set_background_animation(rainbow)
-            logger.debug("Default rainbow LED animation set")
-        except Exception as e:
-            logger.warning(f"Failed to set default LED animation: {e}")
-            # Fallback: Set all LEDs to a dim cyan color
-            logger.info("Using fallback: setting LEDs to dim cyan")
-            self.led_manager.set_all((0, 40, 40))
 
     def _start_led_updates(self) -> None:
         """Start thread to push LED updates to browser."""
@@ -120,11 +96,15 @@ class WebDevice(StreamToyDevice):
 
         while self._led_update_running:
             try:
-                # Get current LED colors
-                led_data = self.led_manager.get_pixel_data()
-
-                # Send to browser
-                server.emit_led_update(led_data)
+                # Get current LED colors from central LED manager
+                if self.state_manager and self.state_manager.led_manager:
+                    led_data = self.state_manager.led_manager.get_pixel_data()
+                    # Send to browser
+                    server.emit_led_update(led_data)
+                else:
+                    # No central LED manager yet, send black LEDs
+                    led_data = [(0, 0, 0)] * 90
+                    server.emit_led_update(led_data)
 
                 # Update at ~10 Hz (100ms)
                 time.sleep(0.1)
@@ -143,9 +123,6 @@ class WebDevice(StreamToyDevice):
         self._led_update_running = False
         if self._led_update_thread:
             self._led_update_thread.join(timeout=2)
-
-        # Stop LED manager
-        self.led_manager.stop()
 
         # Server thread will continue running (daemon)
         logger.info("WebDevice closed")
@@ -183,8 +160,8 @@ class WebDevice(StreamToyDevice):
         # Queue the image path (cache_key ignored by web device)
         self._tile_queue[(row, col)] = (image_path, cache_key or "")
 
-    def submit(self) -> None:
-        """Send all queued tile changes to browser."""
+    def submit_tiles(self) -> None:
+        """Flush queued tile updates to browser."""
         if not self._tile_queue:
             logger.debug("No tiles to submit")
             return
@@ -223,16 +200,18 @@ class WebDevice(StreamToyDevice):
         # Small delay to simulate device behavior
         time.sleep(0.1)
 
-    def set_background_led_animation(self, animation) -> None:
-        """Set the idle LED animation."""
-        logger.info(f"[LED] Setting background LED animation: {type(animation).__name__}")
-        self.led_manager.set_background_animation(animation)
+    def _on_state_tile_update(self, row: int, col: int, image_path: Union[str, Path], cache_key: str) -> None:
+        """
+        Callback from central state manager when a tile is updated.
 
-    def run_led_animation(self, animation, duration: Optional[float] = None) -> None:
-        """Run a foreground LED animation."""
-        duration_str = f"{duration}s" if duration else "one cycle"
-        logger.info(f"[LED] Running foreground LED animation: {type(animation).__name__} for {duration_str}")
-        self.led_manager.run_animation(animation, duration)
+        Args:
+            row: Tile row (0-2)
+            col: Tile column (0-4)
+            image_path: Path to image file
+            cache_key: Cache key for tracking
+        """
+        # Queue the tile update locally
+        self.set_tile(row, col, image_path, cache_key)
 
     def _on_button_event(self, row: int, col: int, is_pressed: bool) -> None:
         """

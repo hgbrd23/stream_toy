@@ -48,6 +48,9 @@ class StreamToyDevice(ABC):
         # Sound manager - shared across all devices
         self.sound_manager: Optional[SoundManager] = None
 
+        # Central state manager reference (set by runtime)
+        self.state_manager = None
+
     @abstractmethod
     def initialize(self) -> None:
         """
@@ -84,6 +87,25 @@ class StreamToyDevice(ABC):
             self.sound_manager.shutdown()
             self.sound_manager = None
 
+    def set_state_manager(self, state_manager) -> None:
+        """
+        Set reference to central state manager.
+
+        Args:
+            state_manager: DisplayStateManager instance
+        """
+        self.state_manager = state_manager
+
+    @abstractmethod
+    def submit_tiles(self) -> None:
+        """
+        Flush queued tile updates to the actual device hardware/browser.
+
+        This is called by the central state manager after tile updates.
+        Subclasses should implement this to send queued tiles to the device.
+        """
+        pass
+
     @abstractmethod
     def set_tile(
         self,
@@ -106,15 +128,16 @@ class StreamToyDevice(ABC):
         """
         pass
 
-    @abstractmethod
     def submit(self) -> None:
         """
         Send all queued tile changes to device.
 
-        This method should block until the device has accepted and processed
-        all pending updates.
+        This is a compatibility method that queues tiles locally and
+        then calls submit_tiles() to flush to the device.
+
+        DEPRECATED: Use state_manager.submit() instead to update all devices.
         """
-        pass
+        self.submit_tiles()
 
     def register_key_callback(self, callback: Callable[[int, int, bool], None]) -> None:
         """
@@ -128,30 +151,36 @@ class StreamToyDevice(ABC):
         """
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Registering key callback: {callback}")
+        logger.warning(f"!!! REGISTERING KEY CALLBACK for device {type(self).__name__}: {callback}")
+        logger.warning(f"!!! Callback function: {callback.__module__}.{callback.__name__ if hasattr(callback, '__name__') else callback}")
         self._key_callback = callback
-        logger.info(f"Key callback registered successfully, _key_callback is now: {self._key_callback}")
+        logger.warning(f"!!! Key callback registered successfully, _key_callback is now: {self._key_callback}")
+        logger.warning(f"!!! Callback is callable: {callable(self._key_callback)}")
 
-    @abstractmethod
     def set_background_led_animation(self, animation) -> None:
         """
-        Set the idle LED animation.
+        Set the idle LED animation on central LED manager.
 
         Args:
             animation: Animation object compatible with adafruit_led_animation
         """
-        pass
+        if self.state_manager:
+            self.state_manager.set_background_led_animation(animation)
+        else:
+            logger.warning("No state manager set, cannot set LED animation")
 
-    @abstractmethod
     def run_led_animation(self, animation, duration: Optional[float] = None) -> None:
         """
-        Run a foreground LED animation, pausing background.
+        Run a foreground LED animation on central LED manager.
 
         Args:
             animation: Animation object compatible with adafruit_led_animation
             duration: Duration in seconds (None = one cycle)
         """
-        pass
+        if self.state_manager:
+            self.state_manager.run_led_animation(animation, duration)
+        else:
+            logger.warning("No state manager set, cannot run LED animation")
 
     def get_tile_position(self, row: int, col: int) -> Tuple[int, int]:
         """

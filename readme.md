@@ -1,3 +1,21 @@
+# Power Supply
+4x 18650 cells with IP5310 power bank module.
+
+The IP5310 module has one USB input (maybe can also be used as output?) for charging, a battery connection and a 5V/USB 
+output.  
+I attached a self made power distribution board to the 5V output. 
+
+The power distribution board has 2x 1000uF capacitors to help with load spikes.
+
+## Cell Configuration
+Parallel (4P)
+```
+Cell 1 ─┐
+Cell 2 ─┼─ 3.7V nominal, 13,200mAh ─── IP5310
+Cell 3 ─┤
+Cell 4 ─┘
+```
+
 # PIN Assignments
 ## Audio
 2x MAX98357A breakout boards
@@ -20,6 +38,19 @@ GPIO23 (3.3V) ──┬─────────────→ Left amp SD_MO
                                    100kΩ (internal)
                                       ↓
                                     GND
+```
+### Diagram Capacitors
+There were some problems with audio quality, especially on battery. Most likely due to switching noise from 
+the IP5310 power IC. SOmetimes even L/R separation of the amps was not working and lots of noise/clicking.
+
+So 3 capacitors solved it at the amps:
+```
+Each amp VDD -> GND:
+    ├── 0.1µF ceramic (closest!)
+    Amp 2
+    ├── 10µF ceramic (close!)
+    ├── 0.1µF ceramic (closest!)
+    Amp 1
 ```
 
 ## LEDs
