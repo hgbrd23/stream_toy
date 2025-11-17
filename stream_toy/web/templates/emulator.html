@@ -108,44 +108,46 @@
         .led-strip-container {
             position: absolute;
             display: flex;
-            gap: 3px;
+            justify-content: space-between;
         }
 
-        /* Back left LEDs - top left corner */
+        /* Back left LEDs - top left portion */
         #led-back-left {
             top: -20px;
-            left: -20px;
+            left: 0;
+            width: 49%;
             flex-direction: row;
         }
 
-        /* Left LEDs - left side vertical */
+        /* Left LEDs - left side, full height */
         #led-left {
-            top: 50%;
+            top: 0;
             left: -20px;
-            transform: translateY(-50%);
+            height: 100%;
             flex-direction: column;
         }
 
-        /* Front LEDs - bottom horizontal */
+        /* Front LEDs - bottom, full width */
         #led-front {
             bottom: -20px;
-            left: 50%;
-            transform: translateX(-50%);
+            left: 0;
+            width: 100%;
             flex-direction: row;
         }
 
-        /* Right LEDs - right side vertical */
+        /* Right LEDs - right side, full height */
         #led-right {
-            top: 50%;
+            top: 0;
             right: -20px;
-            transform: translateY(-50%);
+            height: 100%;
             flex-direction: column;
         }
 
-        /* Back right LEDs - top right corner */
+        /* Back right LEDs - top right portion */
         #led-back-right {
             top: -20px;
-            right: -20px;
+            right: 0;
+            width: 49%;
             flex-direction: row;
         }
 

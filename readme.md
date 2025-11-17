@@ -64,8 +64,9 @@ Each amp VDD -> GND:
 The Activity LED is connected via a 10k resistor so it just glows a bit. I used a white LED.
 
 # System Requirements
-Install the ARM64 lite Pi OS package.
+Use the ARM64 lite Pi OS package.
 
+## Install packages
 ```shell
 apt install -y libudev-dev libusb-1.0-0-dev libhidapi-libusb0 python3-dev python3-pil python3-pyudev libegl1 libgl1 \
   libopengl0 libxcb-cursor0 libxkbcommon0 mpg123 portaudio19-dev python3-pyaudio ffmpeg 
@@ -74,50 +75,11 @@ apt install -y libudev-dev libusb-1.0-0-dev libhidapi-libusb0 python3-dev python
 On **Raspberry Pi OS Bookworm and later**, the config file lives at
 `/boot/firmware/config.txt` (instead of `/boot/config.txt`).
 
----
 
-### 🧾 Here’s exactly what to change
+## Edit `/boot/firmware/config.txt`
+Should contain these relevant lines in the last section of the config:
 
-1. **Enable I²S**
-   Find this commented line:
-
-   ```bash
-   #dtparam=i2s=on
-   ```
-
-   and **uncomment** it (remove the `#`):
-
-   ```bash
-   dtparam=i2s=on
-   ```
-
-2. **Disable the built-in analog audio**
-   The line:
-
-   ```bash
-   dtparam=audio=on
-   ```
-
-   enables the Pi’s onboard PWM audio, which conflicts with the I²S interface.
-   Comment it out:
-
-   ```bash
-   #dtparam=audio=on
-   ```
-
-3. **Add the MAX98357A overlay**
-   Scroll to the very end of the file (after `[all]`) and add:
-
-   ```bash
-   dtoverlay=max98357a,sdmode-pin=23
-   ```
-
-   The `sdmode-pin=23` flag tells the Pi to use this GPIO for shutdown to reduce clicking noises.
-
----
-
-### ✅ Your edited `/boot/firmware/config.txt` should contain these relevant lines:
-
+Right in the beginning of the file:
 ```bash
 # Enable I²S audio for MAX98357A amps
 dtparam=i2s=on
@@ -126,43 +88,51 @@ dtparam=spi=on
 enable_uart=1
 # Disable built-in analog audio
 #dtparam=audio=on
+```
+In section `[all]`
+```bash
 # Use two MAX98357A amps (manual L/R via SD pins)
 dtoverlay=max98357a,sdmode-pin=23
 # Enable GPIO activity LED
 dtparam=act_led_gpio=26
 dtparam=act_led_trigger=heartbeat
-
 ```
-
+## Sound configuration
+Paste this into `/etc/asound.conf`:
 ```
+# Default device uses plug for automatic conversion
 pcm.!default {
-    type softvol
-    slave.pcm "dmixer"
-    control {
-        name "Master"
-        card 0
-    }
-    min_dB -30.0
-    max_dB 0.0
+  type plug
+  slave.pcm "dmixer"
 }
 
+# Dmix configuration
 pcm.dmixer {
-    type dmix
-    ipc_key 1024
-    slave.pcm "hw:0,0"
-    slave.rate 48000
+  type dmix
+  ipc_key 1024
+  slave {
+      pcm "hw:0,0"
+      rate 48000
+  }
 }
 
+# Control device
 ctl.!default {
-    type hw
-    card 0
+  type hw
+  card 0
 }
 
 ```
+## Reboot
+After the changes above, reboot.
+
+## Testing sound
+Commands for testing sound output:
 ```
 speaker-test -t wav -c 2 -l 1
 amixer scontrols
 mpg123 sample-15s.mp3
+# Mixer not working, we are doing our own volume in Python
 amixer set Master 80%
 alsamixer
 ```

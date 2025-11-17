@@ -142,8 +142,8 @@ class AudioPlayerScene(BaseScene):
 
             # Determine display text and color
             if item.is_folder:
-                # Folder: show name with folder icon (smaller font, wrapped)
-                text = f"📁\n{name_stem}"
+                # Folder: show name with folder icon (Font Awesome folder from Nerd Font)
+                text = f"\uf07b\n{name_stem}"
                 self.set_tile_text(row, col, text, font_size=10, wrap=True)
             else:
                 # Audio file: check for cover art
