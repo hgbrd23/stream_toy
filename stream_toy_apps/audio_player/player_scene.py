@@ -368,7 +368,7 @@ class PlayerScene(BaseScene):
                 sound_mgr.stop()  # Ensure clean state
                 sound_mgr.play_music(self.audio_file, volume=self.current_volume)
         elif button == self.BTN_VOL_UP:
-            self.current_volume = min(1.0, self.current_volume + 0.05)
+            self.current_volume = min(0.3, self.current_volume + 0.05)
             sound_mgr.set_volume(self.current_volume)
             logger.info(f"Volume: {self.current_volume:.2f}")
 

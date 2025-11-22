@@ -97,6 +97,8 @@
             margin-top: 10px;
             font-style: italic;
             color: #888;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .video-title.loaded {
@@ -168,6 +170,14 @@
         .file-info {
             display: flex;
             align-items: center;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            min-width: 0;
+        }
+
+        .file-info span:not(.file-icon) {
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .file-icon {
@@ -290,6 +300,387 @@
             background: #3a3a4e;
             box-shadow: 0 0 10px rgba(0, 217, 255, 0.3);
         }
+
+        /* New Folder UI */
+        .new-folder-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #2a3a2a;
+            color: #00ff88;
+            border: 2px solid #00ff88;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            transition: all 0.2s;
+        }
+
+        .new-folder-btn:hover {
+            background: #3a4a3a;
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+        }
+
+        .new-folder-btn:active {
+            background: #2a5a2a;
+        }
+
+        .new-folder-input-container {
+            display: none;
+            margin-bottom: 15px;
+            padding: 12px;
+            background: #2a2a2a;
+            border-radius: 6px;
+            border: 2px solid #00ff88;
+        }
+
+        .new-folder-input-container.visible {
+            display: block;
+        }
+
+        .new-folder-input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .new-folder-input-group input {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #333;
+            border-radius: 6px;
+            font-size: 14px;
+            background: #000;
+            color: #fff;
+        }
+
+        .new-folder-input-group input:focus {
+            outline: none;
+            border-color: #00ff88;
+        }
+
+        .new-folder-input-group button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .new-folder-input-group .btn-create {
+            background: #00ff88;
+            color: #000;
+        }
+
+        .new-folder-input-group .btn-create:hover {
+            background: #00ffaa;
+        }
+
+        .new-folder-input-group .btn-cancel {
+            background: #3a3a3a;
+            color: #fff;
+        }
+
+        .new-folder-input-group .btn-cancel:hover {
+            background: #4a4a4a;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 900px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                border-radius: 20px;
+            }
+
+            .header {
+                padding: 20px 15px;
+            }
+
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .header p {
+                font-size: 14px;
+            }
+
+            .content {
+                padding: 20px 15px;
+            }
+
+            .section-title {
+                font-size: 16px;
+            }
+
+            .back-link {
+                margin: 10px 15px;
+            }
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 5px;
+            }
+
+            .container {
+                border-radius: 15px;
+            }
+
+            .header {
+                padding: 15px 10px;
+            }
+
+            .header h1 {
+                font-size: 20px;
+                margin-bottom: 5px;
+            }
+
+            .header p {
+                font-size: 12px;
+            }
+
+            .content {
+                padding: 15px 10px;
+            }
+
+            .section {
+                margin-bottom: 20px;
+            }
+
+            .section-title {
+                font-size: 15px;
+                margin-bottom: 10px;
+                padding-bottom: 8px;
+            }
+
+            .input-group label {
+                font-size: 13px;
+                margin-bottom: 6px;
+            }
+
+            .input-group input {
+                padding: 10px;
+                font-size: 13px;
+            }
+
+            .video-title {
+                padding: 10px;
+                font-size: 13px;
+            }
+
+            .breadcrumb {
+                padding: 8px;
+                font-size: 13px;
+            }
+
+            .breadcrumb-item {
+                padding: 4px 8px;
+                font-size: 13px;
+            }
+
+            .breadcrumb-separator {
+                margin: 0 3px;
+            }
+
+            .file-list {
+                max-height: 250px;
+            }
+
+            .file-item {
+                padding: 10px 12px;
+            }
+
+            .file-icon {
+                font-size: 18px;
+                margin-right: 8px;
+            }
+
+            .file-info {
+                font-size: 14px;
+            }
+
+            .file-size {
+                font-size: 11px;
+            }
+
+            .btn {
+                padding: 14px 20px;
+                font-size: 15px;
+                /* Larger touch target for mobile */
+                min-height: 48px;
+            }
+
+            .btn-primary:hover:not(:disabled) {
+                /* Reduce transform on mobile to avoid layout shift */
+                transform: none;
+            }
+
+            .log-container {
+                padding: 12px;
+                font-size: 11px;
+                max-height: 200px;
+            }
+
+            .status-message {
+                padding: 10px;
+                font-size: 13px;
+            }
+
+            .back-link {
+                margin: 8px 10px;
+                padding: 10px 14px;
+                font-size: 13px;
+                display: block;
+                text-align: center;
+            }
+
+            .loading {
+                width: 12px;
+                height: 12px;
+            }
+
+            .new-folder-btn {
+                font-size: 13px;
+                padding: 8px 14px;
+            }
+
+            .new-folder-input-container {
+                padding: 10px;
+            }
+
+            .new-folder-input-group {
+                flex-direction: column;
+            }
+
+            .new-folder-input-group input {
+                width: 100%;
+                margin-bottom: 8px;
+            }
+
+            .new-folder-input-group button {
+                width: 100%;
+            }
+        }
+
+        /* Small phones */
+        @media (max-width: 400px) {
+            .header h1 {
+                font-size: 18px;
+            }
+
+            .header p {
+                font-size: 11px;
+            }
+
+            .section-title {
+                font-size: 14px;
+            }
+
+            .breadcrumb-item {
+                font-size: 12px;
+                padding: 3px 6px;
+            }
+
+            .file-item {
+                padding: 8px 10px;
+                flex-wrap: wrap;
+            }
+
+            .file-info {
+                font-size: 13px;
+            }
+
+            .file-size {
+                font-size: 10px;
+                margin-left: 0;
+                width: 100%;
+                margin-top: 4px;
+                padding-left: 28px;
+            }
+
+            .btn {
+                font-size: 14px;
+            }
+        }
+
+        /* Landscape orientation on mobile */
+        @media (max-width: 900px) and (orientation: landscape) {
+            .file-list {
+                max-height: 200px;
+            }
+
+            .log-container {
+                max-height: 150px;
+            }
+        }
+
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .breadcrumb-item:hover {
+                background: transparent;
+            }
+
+            .breadcrumb-item:active {
+                background: #3a3a3a;
+            }
+
+            .file-item:hover {
+                background: transparent;
+            }
+
+            .file-item:active {
+                background: #2a2a2a;
+            }
+
+            .back-link:hover {
+                background: #2a2a3e;
+                box-shadow: none;
+            }
+
+            .back-link:active {
+                background: #3a3a4e;
+            }
+
+            .btn-primary:hover:not(:disabled) {
+                transform: none;
+                box-shadow: none;
+                background: #00d9ff;
+            }
+
+            .btn-primary:active:not(:disabled) {
+                background: #00c5eb;
+            }
+
+            .new-folder-btn:hover {
+                background: #2a3a2a;
+                box-shadow: none;
+            }
+
+            .new-folder-btn:active {
+                background: #3a4a3a;
+            }
+
+            .new-folder-input-group .btn-create:hover {
+                background: #00ff88;
+            }
+
+            .new-folder-input-group .btn-create:active {
+                background: #00dd77;
+            }
+
+            .new-folder-input-group .btn-cancel:hover {
+                background: #3a3a3a;
+            }
+
+            .new-folder-input-group .btn-cancel:active {
+                background: #4a4a4a;
+            }
+        }
     </style>
 </head>
 <body>
@@ -314,6 +705,19 @@
             <!-- Directory Browser Section -->
             <div class="section">
                 <div class="section-title">2. Select Download Location</div>
+
+                <!-- New Folder Button -->
+                <button id="new-folder-btn" class="new-folder-btn">📁 New Folder</button>
+
+                <!-- New Folder Input (hidden by default) -->
+                <div id="new-folder-input-container" class="new-folder-input-container">
+                    <div class="new-folder-input-group">
+                        <input type="text" id="new-folder-input" placeholder="Enter folder name..." maxlength="50">
+                        <button id="new-folder-create-btn" class="btn-create">Create</button>
+                        <button id="new-folder-cancel-btn" class="btn-cancel">Cancel</button>
+                    </div>
+                </div>
+
                 <div id="breadcrumb" class="breadcrumb"></div>
                 <div id="file-list" class="file-list"></div>
             </div>
@@ -353,6 +757,11 @@
         const downloadBtn = document.getElementById('download-btn');
         const statusMessage = document.getElementById('status-message');
         const logContainer = document.getElementById('log-container');
+        const newFolderBtn = document.getElementById('new-folder-btn');
+        const newFolderInputContainer = document.getElementById('new-folder-input-container');
+        const newFolderInput = document.getElementById('new-folder-input');
+        const newFolderCreateBtn = document.getElementById('new-folder-create-btn');
+        const newFolderCancelBtn = document.getElementById('new-folder-cancel-btn');
 
         // URL input handler with debounce
         let urlTimeout;
@@ -403,6 +812,60 @@
 
             updateDownloadButton();
         }
+
+        // New Folder Handlers
+        newFolderBtn.addEventListener('click', () => {
+            newFolderInputContainer.classList.add('visible');
+            newFolderInput.value = '';
+            newFolderInput.focus();
+        });
+
+        newFolderCancelBtn.addEventListener('click', () => {
+            newFolderInputContainer.classList.remove('visible');
+            newFolderInput.value = '';
+        });
+
+        newFolderCreateBtn.addEventListener('click', async () => {
+            const folderName = newFolderInput.value.trim();
+            if (!folderName) {
+                showStatus('Please enter a folder name', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/audio/create-dir', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        current_path: currentPath,
+                        dir_name: folderName
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(data.message, 'success');
+                    newFolderInputContainer.classList.remove('visible');
+                    newFolderInput.value = '';
+                    // Refresh directory listing
+                    await loadDirectory(currentPath);
+                } else {
+                    showStatus(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            }
+        });
+
+        // Allow Enter key to create folder
+        newFolderInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                newFolderCreateBtn.click();
+            } else if (e.key === 'Escape') {
+                newFolderCancelBtn.click();
+            }
+        });
 
         // Load directory listing
         async function loadDirectory(path) {

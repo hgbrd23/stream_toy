@@ -62,14 +62,14 @@ class TestSettingsManager(unittest.TestCase):
 
     def test_volume_cap_on_startup(self):
         """Test that volume is capped at MAX_STARTUP_VOLUME (0.2) on startup."""
-        # Create settings manager and set high volume
+        # Create settings manager and set volume to 0.28 (above startup cap but below MAX_VOLUME)
         settings1 = SettingsManager(self.settings_path)
-        settings1.set_volume(0.8)
+        settings1.set_volume(0.28)
 
-        # Verify it was saved as 0.8
-        self.assertEqual(settings1.get_volume(), 0.8, "Volume should be saved as 0.8")
+        # Verify it was saved as 0.28
+        self.assertEqual(settings1.get_volume(), 0.28, "Volume should be saved as 0.28")
 
-        # Create new settings manager - volume should be capped at 0.2
+        # Create new settings manager - volume should be capped at 0.2 on startup
         settings2 = SettingsManager(self.settings_path)
         loaded_volume = settings2.get_volume()
 
@@ -88,12 +88,12 @@ class TestSettingsManager(unittest.TestCase):
         self.assertEqual(loaded_volume, 0.15, "Volume below cap should not be affected")
 
     def test_volume_clamping(self):
-        """Test that volume is clamped to valid range (0.0-1.0)."""
+        """Test that volume is clamped to valid range (0.0-0.3)."""
         settings = SettingsManager(self.settings_path)
 
         # Test upper bound
         settings.set_volume(1.5)
-        self.assertEqual(settings.get_volume(), 1.0, "Volume should be clamped to 1.0")
+        self.assertEqual(settings.get_volume(), 0.3, "Volume should be clamped to 0.3 (MAX_VOLUME)")
 
         # Test lower bound
         settings.set_volume(-0.5)
@@ -117,9 +117,9 @@ class TestSettingsManager(unittest.TestCase):
         """Test resetting settings to defaults."""
         settings = SettingsManager(self.settings_path)
 
-        # Change volume
-        settings.set_volume(0.5)
-        self.assertEqual(settings.get_volume(), 0.5)
+        # Change volume to 0.25 (within MAX_VOLUME of 0.3)
+        settings.set_volume(0.25)
+        self.assertEqual(settings.get_volume(), 0.25)
 
         # Reset to defaults
         result = settings.reset_to_defaults()
