@@ -29,6 +29,9 @@ class SettingsManager:
         'volume': 0.1,  # Default volume 10%
     }
 
+    # Maximum allowed volume (safety limit for children's toy)
+    MAX_VOLUME = 0.3
+
     # Maximum allowed volume on startup (safety limit for children's toy)
     MAX_STARTUP_VOLUME = 0.2
 
@@ -147,13 +150,13 @@ class SettingsManager:
         Set the volume setting and save to disk.
 
         Args:
-            volume: Volume level (0.0 to 1.0)
+            volume: Volume level (0.0 to MAX_VOLUME)
 
         Returns:
             True if successful, False otherwise
         """
-        # Clamp volume to valid range
-        volume = max(0.0, min(1.0, volume))
+        # Clamp volume to valid range (0.0 to MAX_VOLUME)
+        volume = max(0.0, min(self.MAX_VOLUME, volume))
         return self.set('volume', volume, save=True)
 
     def reset_to_defaults(self) -> bool:

@@ -612,14 +612,17 @@ class SoundManager:
         Set music volume and persist to settings.
 
         Args:
-            volume: Volume level (0.0-1.0)
+            volume: Volume level (0.0-0.3)
 
         Returns:
             True if volume set successfully (or saved even when audio unavailable)
         """
         try:
+            # Import here to avoid circular dependency
+            from stream_toy.settings_manager import SettingsManager
+
             with self._lock:
-                self._volume = max(0.0, min(1.0, volume))
+                self._volume = max(0.0, min(SettingsManager.MAX_VOLUME, volume))
 
             # Persist to settings if available (even when audio backend is disabled)
             if self._settings_manager:

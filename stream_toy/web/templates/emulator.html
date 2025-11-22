@@ -124,7 +124,7 @@
             top: 0;
             left: -20px;
             height: 100%;
-            flex-direction: column;
+            flex-direction: column-reverse;
         }
 
         /* Front LEDs - bottom, full width */
@@ -132,7 +132,7 @@
             bottom: -20px;
             left: 0;
             width: 100%;
-            flex-direction: row;
+            flex-direction: row-reverse;
         }
 
         /* Right LEDs - right side, full height */
@@ -140,7 +140,7 @@
             top: 0;
             right: -20px;
             height: 100%;
-            flex-direction: column;
+            flex-direction: column-reverse;
         }
 
         /* Back right LEDs - top right portion */
@@ -148,7 +148,7 @@
             top: -20px;
             right: 0;
             width: 49%;
-            flex-direction: row;
+            flex-direction: row-reverse;
         }
 
         .led {
@@ -199,6 +199,245 @@
         #nav-links a:hover {
             background: #3a3a4e;
             box-shadow: 0 0 10px rgba(0, 217, 255, 0.3);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 1000px) {
+            body {
+                padding: 15px;
+            }
+
+            #container {
+                padding: 30px;
+                border-radius: 20px;
+            }
+
+            #device-container {
+                padding: 20px;
+            }
+
+            /* Scale down the entire device */
+            #streamdock-wrapper {
+                transform: scale(0.9);
+                transform-origin: center;
+            }
+
+            .led-strip-container {
+                transform: scale(0.9);
+                transform-origin: center;
+            }
+        }
+
+        @media (max-width: 900px) {
+            body {
+                padding: 10px;
+            }
+
+            #container {
+                padding: 20px;
+                border-radius: 15px;
+            }
+
+            #header h1 {
+                font-size: 20px;
+            }
+
+            #header p {
+                font-size: 12px;
+            }
+
+            #device-container {
+                padding: 15px;
+            }
+
+            /* Scale down more for tablets */
+            #streamdock-wrapper {
+                transform: scale(0.75);
+                transform-origin: center;
+            }
+
+            .led-strip-container {
+                transform: scale(0.75);
+                transform-origin: center;
+            }
+
+            #nav-links a {
+                font-size: 13px;
+                padding: 6px 12px;
+                margin: 0 5px;
+            }
+        }
+
+        @media (max-width: 700px) {
+            body {
+                padding: 5px;
+                align-items: flex-start;
+            }
+
+            #container {
+                padding: 15px;
+                border-radius: 10px;
+                width: 100%;
+            }
+
+            #header {
+                margin-bottom: 15px;
+            }
+
+            #header h1 {
+                font-size: 18px;
+            }
+
+            #header p {
+                font-size: 11px;
+            }
+
+            #device-container {
+                padding: 10px;
+                border-radius: 15px;
+            }
+
+            /* Scale to fit mobile screens */
+            #streamdock-wrapper {
+                transform: scale(0.55);
+                transform-origin: center;
+            }
+
+            .led-strip-container {
+                transform: scale(0.55);
+                transform-origin: center;
+            }
+
+            #status {
+                font-size: 12px;
+                margin-top: 15px;
+            }
+
+            #nav-links {
+                margin-top: 10px;
+            }
+
+            #nav-links a {
+                display: block;
+                margin: 5px 0;
+                font-size: 12px;
+                padding: 10px;
+            }
+        }
+
+        @media (max-width: 500px) {
+            body {
+                padding: 2px;
+            }
+
+            #container {
+                padding: 10px;
+                border-radius: 8px;
+            }
+
+            #header h1 {
+                font-size: 16px;
+                margin-bottom: 3px;
+            }
+
+            #header p {
+                font-size: 10px;
+            }
+
+            #device-container {
+                padding: 5px;
+            }
+
+            /* Scale down significantly for small phones */
+            #streamdock-wrapper {
+                transform: scale(0.45);
+                transform-origin: center;
+            }
+
+            .led-strip-container {
+                transform: scale(0.45);
+                transform-origin: center;
+            }
+
+            .led {
+                width: 10px;
+                height: 10px;
+            }
+
+            #status {
+                font-size: 11px;
+                margin-top: 10px;
+            }
+        }
+
+        @media (max-width: 400px) {
+            #streamdock-wrapper {
+                transform: scale(0.38);
+                transform-origin: center;
+            }
+
+            .led-strip-container {
+                transform: scale(0.38);
+                transform-origin: center;
+            }
+
+            #header h1 {
+                font-size: 14px;
+            }
+
+            #header p {
+                font-size: 9px;
+            }
+        }
+
+        /* Landscape orientation on mobile */
+        @media (max-width: 900px) and (orientation: landscape) {
+            body {
+                align-items: flex-start;
+                padding-top: 10px;
+            }
+
+            #container {
+                margin: 0 auto;
+            }
+
+            #header {
+                margin-bottom: 10px;
+            }
+
+            #streamdock-wrapper {
+                transform: scale(0.6);
+            }
+
+            .led-strip-container {
+                transform: scale(0.6);
+            }
+
+            #status {
+                margin-top: 10px;
+            }
+        }
+
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .button-overlay:hover {
+                border-color: transparent;
+                background: rgba(255, 255, 255, 0.0);
+            }
+
+            .button-overlay:active {
+                border-color: rgba(0, 217, 255, 1);
+                background: rgba(0, 217, 255, 0.3);
+            }
+
+            #nav-links a:hover {
+                background: #2a2a3e;
+                box-shadow: none;
+            }
+
+            #nav-links a:active {
+                background: #3a3a4e;
+            }
         }
     </style>
 </head>

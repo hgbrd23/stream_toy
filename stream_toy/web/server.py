@@ -14,8 +14,39 @@ from pathlib import Path
 import subprocess
 import json
 import threading
+import sys
+import shutil
 
 logger = logging.getLogger(__name__)
+
+
+def get_ytdlp_executable() -> str:
+    """
+    Get path to yt-dlp executable.
+
+    First tries to find it in the same venv as the current Python,
+    otherwise falls back to system PATH.
+    """
+    # Try to find yt-dlp in the same directory as the Python executable
+    python_dir = Path(sys.executable).parent
+    ytdlp_path = python_dir / 'yt-dlp'
+
+    if ytdlp_path.exists() and ytdlp_path.is_file():
+        return str(ytdlp_path)
+
+    # Try with .exe extension (Windows)
+    ytdlp_exe = python_dir / 'yt-dlp.exe'
+    if ytdlp_exe.exists() and ytdlp_exe.is_file():
+        return str(ytdlp_exe)
+
+    # Fall back to searching in PATH
+    ytdlp_in_path = shutil.which('yt-dlp')
+    if ytdlp_in_path:
+        return ytdlp_in_path
+
+    # Last resort - just return 'yt-dlp' and hope it's in PATH
+    logger.warning("yt-dlp not found in venv or PATH, using 'yt-dlp' as fallback")
+    return 'yt-dlp'
 
 # Global references
 app = Flask(__name__)
@@ -145,8 +176,9 @@ def get_youtube_title():
 
         # Use yt-dlp to get video title (much faster than --dump-json)
         # --no-playlist ensures we only get the single video, not the entire playlist
+        ytdlp = get_ytdlp_executable()
         result = subprocess.run(
-            ['yt-dlp', '--print', '%(title)s', '--no-warnings', '--no-playlist', url],
+            [ytdlp, '--print', '%(title)s', '--no-warnings', '--no-playlist', url],
             capture_output=True,
             text=True,
             timeout=30
@@ -178,8 +210,8 @@ def list_audio_files():
         data = request.get_json()
         current_path = data.get('path', 'data/audio_player')
 
-        # Ensure path is relative to workspace root
-        base_path = Path('/workspace')
+        # Ensure path is relative to project root (parent of stream_toy/)
+        base_path = Path(__file__).parent.parent.parent.resolve()
         full_path = base_path / current_path
 
         # Security: prevent directory traversal
@@ -190,8 +222,13 @@ def list_audio_files():
         except Exception:
             return jsonify({'error': 'Invalid path'}), 403
 
+        # Create directory if it doesn't exist (for initial setup)
         if not full_path.exists():
-            return jsonify({'error': 'Directory does not exist'}), 404
+            # Only create if it's under data/audio_player
+            if str(full_path).startswith(str(base_path / 'data' / 'audio_player')):
+                full_path.mkdir(parents=True, exist_ok=True)
+            else:
+                return jsonify({'error': 'Directory does not exist'}), 404
 
         if not full_path.is_dir():
             return jsonify({'error': 'Path is not a directory'}), 400
@@ -238,6 +275,56 @@ def list_audio_files():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/audio/create-dir', methods=['POST'])
+def create_audio_directory():
+    """Create a new directory for audio files."""
+    try:
+        data = request.get_json()
+        current_path = data.get('current_path', 'data/audio_player')
+        dir_name = data.get('dir_name', '').strip()
+
+        if not dir_name:
+            return jsonify({'error': 'Directory name is required'}), 400
+
+        # Validate directory name (no path separators, hidden files, etc.)
+        if '/' in dir_name or '\\' in dir_name or dir_name.startswith('.'):
+            return jsonify({'error': 'Invalid directory name'}), 400
+
+        # Ensure path is relative to project root (parent of stream_toy/)
+        base_path = Path(__file__).parent.parent.parent.resolve()
+        parent_path = base_path / current_path
+        new_dir_path = parent_path / dir_name
+
+        # Security: prevent directory traversal
+        try:
+            new_dir_path = new_dir_path.resolve()
+            parent_path = parent_path.resolve()
+            if not str(new_dir_path).startswith(str(base_path / 'data' / 'audio_player')):
+                return jsonify({'error': 'Invalid path'}), 403
+            if not str(parent_path).startswith(str(base_path / 'data' / 'audio_player')):
+                return jsonify({'error': 'Invalid parent path'}), 403
+        except Exception:
+            return jsonify({'error': 'Invalid path'}), 403
+
+        # Check if directory already exists
+        if new_dir_path.exists():
+            return jsonify({'error': 'Directory already exists'}), 409
+
+        # Create the directory
+        new_dir_path.mkdir(parents=True, exist_ok=False)
+        logger.info(f"Created directory: {new_dir_path}")
+
+        return jsonify({
+            'success': True,
+            'path': str(new_dir_path.relative_to(base_path)),
+            'message': f'Directory "{dir_name}" created successfully'
+        })
+
+    except Exception as e:
+        logger.error(f"Error creating directory: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @socketio.on('start_download')
 def handle_download(data):
     """Handle YouTube download request."""
@@ -249,8 +336,8 @@ def handle_download(data):
             emit('download_error', {'error': 'URL is required'})
             return
 
-        # Ensure path is relative to workspace root
-        base_path = Path('/workspace')
+        # Ensure path is relative to project root (parent of stream_toy/)
+        base_path = Path(__file__).parent.parent.parent.resolve()
         full_target_dir = base_path / target_dir
 
         # Security: prevent directory traversal
@@ -284,12 +371,15 @@ def handle_download(data):
 def _run_download(url: str, target_dir: Path, client_sid: str):
     """Run yt-dlp download and stream output to client."""
     try:
+        # Get yt-dlp executable path
+        ytdlp = get_ytdlp_executable()
+
         # Run yt-dlp with progress output
         # --no-playlist ensures we only download the single video, not the entire playlist
         # --convert-thumbnails jpg converts webp and other formats to jpg for compatibility
         process = subprocess.Popen(
             [
-                'yt-dlp',
+                ytdlp,
                 '--extract-audio',
                 '--audio-format', 'mp3',
                 '--write-thumbnail',
@@ -343,5 +433,9 @@ def run_server(host: str = '0.0.0.0', port: int = 5000) -> None:
         host: Host address to bind
         port: Port to listen on
     """
+    # Log yt-dlp location for diagnostics
+    ytdlp_path = get_ytdlp_executable()
+    logger.info(f"Using yt-dlp from: {ytdlp_path}")
+
     logger.info(f"Starting emulator web server on {host}:{port}")
     socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)

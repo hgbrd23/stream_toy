@@ -20,14 +20,19 @@ Cell 4 ─┘
 ## Audio
 2x MAX98357A breakout boards
 
-| Signal | Pi Pin       | Left Amp | Right Amp | Color |
-|--------|--------------|----------|-----------|-------|
-| BCLK | 12 (GPIO 18) | BCLK | BCLK | green |
-| LRCLK | 35 (GPIO 19) | LRCLK | LRCLK | yellow |
-| DIN | 40 (GPIO 21) | DIN | DIN | blue |
-| 5V | Power Module | VDD | VDD | red |
-| GND | Power Module | GND | GND | brown |
-| SD_MODE | 16 (GPIO 23) | Direct | Through 200kΩ | purple |
+As there were problems with interference I used an old USB cable with 4 wires. The shield is only connected on the RPI 
+side to GND.
+
+| Signal   | Pi Pin         | Left Amp  | Right Amp     | Color    |
+|----------|----------------|-----------|---------------|----------|
+| BCLK     | 12 (GPIO 18)   | BCLK      | BCLK          | green    |
+| LRCLK    | 35 (GPIO 19)   | LRCLK     | LRCLK         | white    |
+| DIN      | 40 (GPIO 21)   | DIN       | DIN           | black    |
+| SD_MODE  | 16 (GPIO 23)   | Direct    | Through 200kΩ | red      |
+| Shield   | 20 (GND)       |           |               |          |
+| -------- | -------------- | --------- | -----------   | -------- |
+| 5V       | 2 (5V)         | VDD       | VDD           | yellow   |
+| GND      | 9 (GND)        | GND       | GND           | brown    |
 
 ### Diagram SD_MODE
 ```
@@ -69,7 +74,7 @@ Use the ARM64 lite Pi OS package.
 ## Install packages
 ```shell
 apt install -y libudev-dev libusb-1.0-0-dev libhidapi-libusb0 python3-dev python3-pil python3-pyudev libegl1 libgl1 \
-  libopengl0 libxcb-cursor0 libxkbcommon0 mpg123 portaudio19-dev python3-pyaudio ffmpeg 
+  libopengl0 libxcb-cursor0 libxkbcommon0 mpg123 portaudio19-dev python3-pyaudio ffmpeg git 
 ```
 
 On **Raspberry Pi OS Bookworm and later**, the config file lives at
