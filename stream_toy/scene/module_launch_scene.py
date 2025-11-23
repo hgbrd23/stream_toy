@@ -5,6 +5,7 @@ Displays all available modules and allows launching them.
 """
 
 from typing import List, TYPE_CHECKING
+import asyncio
 import logging
 
 from .menu_scene import MenuScene, MenuItem, ButtonAction
@@ -35,6 +36,19 @@ class ModuleLaunchScene(MenuScene):
 
     async def on_enter(self) -> None:
         """Initialize LED animation and menu."""
+        # Reset LEDs to dim white before starting sparkle
+        try:
+            if self.state_manager.led_manager:
+                # Clear any previous animations
+                self.state_manager.led_manager.background_animation = None
+                self.state_manager.led_manager.foreground_animation = None
+                # Set dim white (30% brightness of full white)
+                dim_white = (77, 77, 77)
+                self.state_manager.led_manager.set_all(dim_white)
+                await asyncio.sleep(0.2)  # Brief pause to ensure it's set
+        except Exception as e:
+            logger.debug(f"Failed to reset LEDs: {e}")
+
         # Set Sparkle LED animation for main menu
         if SPARKLE_AVAILABLE and self.state_manager.led_manager:
             try:

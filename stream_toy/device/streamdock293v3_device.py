@@ -405,6 +405,72 @@ class StreamDock293V3Device(StreamToyDevice):
         self._initialized = False
         logger.info("StreamDock device closed")
 
+    def set_background_image(self, image_path: Union[str, Path], wait_for_ack: bool = True, timeout: float = 5.0) -> bool:
+        """
+        Set full screen background image (800x480).
+
+        This method sets the background image and optionally waits for ACK from the device.
+        Full screen images take 500ms to 3+ seconds to update and require ACK waiting.
+
+        Args:
+            image_path: Path to background image file
+            wait_for_ack: Whether to wait for device ACK (default: True)
+            timeout: Maximum seconds to wait for ACK (default: 5.0)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.sdk_device:
+            logger.error("Device not initialized")
+            return False
+
+        image_path = Path(image_path)
+        if not image_path.exists():
+            logger.error(f"Background image not found: {image_path}")
+            return False
+
+        try:
+            logger.info(f"Setting background image: {image_path}")
+
+            # Set device busy flag before sending image
+            if wait_for_ack:
+                self._device_busy = True
+
+            # Call SDK method to set background image
+            result = self.sdk_device.set_touchscreen_image(str(image_path))
+
+            if result != 1:
+                logger.warning(f"Failed to set background image: result={result}")
+                self._device_busy = False
+                return False
+
+            # Trigger refresh
+            self.sdk_device.refresh()
+            logger.debug("Background image set, refresh triggered")
+
+            # Wait for ACK if requested
+            if wait_for_ack:
+                logger.info(f"Waiting for device ACK (timeout: {timeout}s)...")
+                start_time = time.time()
+
+                while self._device_busy:
+                    if time.time() - start_time > timeout:
+                        logger.error(f"Timeout waiting for device ACK after {timeout}s")
+                        self._device_busy = False
+                        return False
+
+                    time.sleep(0.01)  # 10ms poll interval
+
+                elapsed = time.time() - start_time
+                logger.info(f"Device ACK received after {elapsed:.2f}s")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error setting background image: {e}", exc_info=True)
+            self._device_busy = False
+            return False
+
     def set_tile(
         self,
         row: int,
