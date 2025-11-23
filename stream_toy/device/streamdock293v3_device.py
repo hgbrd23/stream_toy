@@ -380,24 +380,30 @@ class StreamDock293V3Device(StreamToyDevice):
         """Close device and cleanup."""
         logger.info("Closing StreamDock device")
 
-        # Stop custom read thread
-        if self._read_running:
-            logger.info("Stopping custom read thread...")
-            self._read_running = False
-            if self._read_thread and self._read_thread.is_alive():
-                self._read_thread.join(timeout=2.0)
-            logger.info("Custom read thread stopped")
+        # Signal read thread to stop
+        self._read_running = False
+        logger.info("Signaled read thread to stop")
 
-        # Close SDK device
-        if self.sdk_device:
-            try:
-                self.sdk_device.clearAllIcon()
-                self.sdk_device.refresh()
-                self.sdk_device.transport.close()
-            except Exception as e:
-                logger.error(f"Error closing device: {e}")
+        # Wait briefly for read thread to notice the signal
+        # Note: Thread may be blocked in transport.read_(), so it might not
+        # exit immediately. We give it a chance but don't force it.
+        if self._read_thread and self._read_thread.is_alive():
+            logger.info("Waiting for read thread to stop...")
+            self._read_thread.join(timeout=1.0)
+
+            if self._read_thread.is_alive():
+                logger.info("Read thread still running (normal - blocked in USB read)")
+            else:
+                logger.info("Read thread stopped")
+
+        # DO NOT close the transport explicitly
+        # The read thread may still be blocked in transport.read_(), and closing
+        # the transport while a USB read is in progress causes libusb mutex
+        # deadlocks (SIGABRT). Let the OS clean up USB resources on process exit.
+        logger.info("Skipping transport close (OS will clean up USB resources)")
 
         self._initialized = False
+        logger.info("StreamDock device closed")
 
     def set_tile(
         self,
