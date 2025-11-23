@@ -173,6 +173,7 @@
             word-wrap: break-word;
             overflow-wrap: break-word;
             min-width: 0;
+            flex: 1;
         }
 
         .file-info span:not(.file-icon) {
@@ -189,6 +190,34 @@
             color: #666;
             font-size: 12px;
             margin-left: auto;
+        }
+
+        .file-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 10px;
+        }
+
+        .delete-btn {
+            background: transparent;
+            border: none;
+            color: #ff4444;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+            opacity: 0.6;
+        }
+
+        .delete-btn:hover {
+            opacity: 1;
+            background: rgba(255, 68, 68, 0.1);
+        }
+
+        .delete-btn:active {
+            background: rgba(255, 68, 68, 0.2);
         }
 
         .btn {
@@ -916,6 +945,58 @@
             });
         }
 
+        // Delete item
+        async function deleteItem(itemPath, itemName, itemType) {
+            const confirmMsg = itemType === 'directory'
+                ? `Delete folder "${itemName}"?`
+                : `Delete file "${itemName}"?`;
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/audio/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: itemPath, force: false })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(data.message, 'success');
+                    // Refresh directory listing
+                    await loadDirectory(currentPath);
+                } else if (data.requires_confirmation) {
+                    // Folder is not empty, ask for confirmation
+                    const confirmForce = confirm(
+                        `This folder contains ${data.item_count} item(s). Delete anyway?`
+                    );
+                    if (confirmForce) {
+                        // Try again with force=true
+                        const forceResponse = await fetch('/api/audio/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: itemPath, force: true })
+                        });
+
+                        const forceData = await forceResponse.json();
+                        if (forceResponse.ok) {
+                            showStatus(forceData.message, 'success');
+                            await loadDirectory(currentPath);
+                        } else {
+                            showStatus(`Error: ${forceData.error}`, 'error');
+                        }
+                    }
+                } else {
+                    showStatus(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+
         // Render file list
         function renderFileList(items) {
             fileList.innerHTML = '';
@@ -948,15 +1029,34 @@
                     div.appendChild(size);
                 }
 
+                // Add actions (delete button)
+                const actions = document.createElement('div');
+                actions.className = 'file-actions';
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '🗑️';
+                deleteBtn.title = `Delete ${item.type === 'directory' ? 'folder' : 'file'}`;
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteItem(item.path, item.name, item.type);
+                });
+
+                actions.appendChild(deleteBtn);
+                div.appendChild(actions);
+
                 if (item.type === 'directory') {
-                    div.addEventListener('click', () => {
-                        loadDirectory(item.path);
+                    div.addEventListener('click', (e) => {
+                        // Only navigate if not clicking the delete button
+                        if (!e.target.classList.contains('delete-btn')) {
+                            loadDirectory(item.path);
+                        }
                     });
                 }
 
                 // Allow selecting the current directory
-                div.addEventListener('dblclick', () => {
-                    if (item.type === 'directory') {
+                div.addEventListener('dblclick', (e) => {
+                    if (item.type === 'directory' && !e.target.classList.contains('delete-btn')) {
                         selectedDirectory = item.path;
                         renderFileList(items);
                         updateDownloadButton();
