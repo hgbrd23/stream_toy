@@ -325,6 +325,99 @@ def create_audio_directory():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/audio/delete', methods=['POST'])
+def delete_audio_item():
+    """Delete a file or directory."""
+    try:
+        data = request.get_json()
+        item_path = data.get('path', '').strip()
+        force = data.get('force', False)  # Force delete non-empty directories
+
+        if not item_path:
+            return jsonify({'error': 'Path is required'}), 400
+
+        # Ensure path is relative to project root (parent of stream_toy/)
+        base_path = Path(__file__).parent.parent.parent.resolve()
+        full_path = base_path / item_path
+
+        # Security: prevent directory traversal
+        try:
+            full_path = full_path.resolve()
+            if not str(full_path).startswith(str(base_path / 'data' / 'audio_player')):
+                return jsonify({'error': 'Invalid path'}), 403
+        except Exception:
+            return jsonify({'error': 'Invalid path'}), 403
+
+        # Check if path exists
+        if not full_path.exists():
+            return jsonify({'error': 'Path does not exist'}), 404
+
+        # Handle directory deletion
+        if full_path.is_dir():
+            # Check if directory has visible items (directories and audio files)
+            # Ignore hidden files (starting with .) like .DS_Store, .directory, etc.
+            audio_extensions = {'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma'}
+            visible_items = [
+                item for item in full_path.iterdir()
+                if not item.name.startswith('.')  # Skip hidden files
+                and (item.is_dir() or (item.is_file() and item.suffix.lower() in audio_extensions))
+            ]
+
+            if visible_items and not force:
+                return jsonify({
+                    'error': 'Directory is not empty',
+                    'requires_confirmation': True,
+                    'item_count': len(visible_items)
+                }), 400
+
+            # Delete directory (and contents if force=True)
+            import shutil
+            shutil.rmtree(full_path)
+            logger.info(f"Deleted directory: {full_path}")
+            return jsonify({
+                'success': True,
+                'message': f'Directory deleted successfully'
+            })
+
+        # Handle file deletion
+        elif full_path.is_file():
+            # Audio file extensions
+            audio_extensions = {'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma'}
+
+            if full_path.suffix.lower() in audio_extensions:
+                # Delete associated files (thumbnail and settings)
+                stem = full_path.stem
+                parent = full_path.parent
+
+                # Delete thumbnail (.jpg with same name)
+                thumbnail_path = parent / f"{stem}.jpg"
+                if thumbnail_path.exists():
+                    thumbnail_path.unlink()
+                    logger.info(f"Deleted thumbnail: {thumbnail_path}")
+
+                # Delete settings (.yml with same name)
+                settings_path = parent / f"{stem}.yml"
+                if settings_path.exists():
+                    settings_path.unlink()
+                    logger.info(f"Deleted settings: {settings_path}")
+
+            # Delete the main file
+            full_path.unlink()
+            logger.info(f"Deleted file: {full_path}")
+
+            return jsonify({
+                'success': True,
+                'message': f'File deleted successfully'
+            })
+
+        else:
+            return jsonify({'error': 'Path is neither a file nor a directory'}), 400
+
+    except Exception as e:
+        logger.error(f"Error deleting item: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @socketio.on('start_download')
 def handle_download(data):
     """Handle YouTube download request."""
