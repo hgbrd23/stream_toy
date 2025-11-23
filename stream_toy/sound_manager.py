@@ -1,10 +1,23 @@
 """
 Sound management system for StreamToy.
 
-Manages audio playback with support for simple sound effects and
-streaming music with full playback controls (pause, stop, seek).
+Provides two types of audio playback:
 
-Uses miniaudio for audio decoding and playback.
+1. Sound Effects (play_sound):
+   - Short sound effects (< 5 seconds)
+   - Uses miniaudio for simple, fast playback
+   - Fire-and-forget, non-blocking
+   - Ideal for UI sounds, game effects
+
+2. Music Playback (play_music):
+   - Long audio files (audiobooks, music)
+   - Uses PyAudio with ALSA for hardware control
+   - Full playback controls: pause, resume, seek, position tracking
+   - Callback support for position updates
+   - Persistent playback position
+   - Ideal for audio player app
+
+Both methods decode files using miniaudio and support MP3, FLAC, WAV, etc.
 """
 
 import threading
@@ -28,11 +41,20 @@ class SoundManager:
     """
     Manages audio playback for StreamToy.
 
-    Features:
-    - Simple MP3 playback (fire and forget)
-    - Streaming playback with pause/resume/seek controls
-    - Callbacks for playback position and status changes
-    - Thread-safe operation
+    Two playback modes:
+
+    1. Sound Effects (play_sound):
+       - Non-blocking background threads
+       - For short UI sounds and game effects
+       - Simple fire-and-forget
+
+    2. Music Playback (play_music):
+       - Dedicated playback thread
+       - Full controls: pause, resume, seek, stop
+       - Position tracking and callbacks
+       - For audio player app
+
+    Thread-safe operation with proper locking.
     """
 
     def __init__(self, sample_rate: int = 48000, settings_manager=None):
@@ -150,7 +172,10 @@ class SoundManager:
 
     def _play_sound_internal(self, file_path: Path, volume: float) -> None:
         """
-        Internal method to play a sound effect.
+        Internal method to play a short sound effect.
+
+        This method decodes the entire file into memory and plays it.
+        Suitable for short sound effects only.
 
         Args:
             file_path: Path to audio file
@@ -158,45 +183,85 @@ class SoundManager:
         """
         try:
             import miniaudio
+            import array
 
-            # Decode entire file
+            # Decode entire file into memory (suitable for short sound effects)
             decoded = miniaudio.decode_file(str(file_path))
 
-            # Apply volume
+            # Apply volume by adjusting samples
             volume = max(0.0, min(1.0, volume))
+            samples = array.array(decoded.samples.typecode, decoded.samples)
+
             if volume != 1.0:
-                import array
-                samples = array.array(decoded.samples.typecode, decoded.samples)
                 for i in range(len(samples)):
                     samples[i] = int(samples[i] * volume)
-                decoded = miniaudio.DecodedSoundFile(
-                    decoded.name,
-                    decoded.nchannels,
-                    decoded.sample_rate,
-                    decoded.sample_format,
-                    samples
-                )
 
-            # Play sound (blocking)
-            stream = miniaudio.stream_file(str(file_path))
-            with miniaudio.PlaybackDevice(
-                sample_rate=stream.sample_rate,
-                output_format=stream.sample_format,
-                nchannels=stream.nchannels
-            ) as device:
-                # Apply volume to stream
-                for chunk in stream:
-                    if volume != 1.0:
-                        import array
-                        samples = array.array(chunk.typecode, chunk)
-                        for i in range(len(samples)):
-                            samples[i] = int(samples[i] * volume)
-                        device.write(samples)
+            # Convert to bytes for playback
+            samples_bytes = samples.tobytes()
+            total_bytes = len(samples_bytes)
+            position = [0]  # Use list to allow modification in nested function
+
+            # Calculate bytes per frame (channels * bytes_per_sample)
+            # For SIGNED16 format: 2 bytes per sample
+            sample_width = 2  # SIGNED16 = 2 bytes
+            bytes_per_frame = decoded.nchannels * sample_width
+
+            # Create generator callback for streaming playback
+            # miniaudio calls generator.send(framecount) to request frames
+            def stream_generator():
+                # First yield primes the generator (receives framecount via send)
+                frames_needed = yield b''
+
+                while True:
+                    # Check if done
+                    if position[0] >= total_bytes:
+                        # Yield silence and wait for next request
+                        frames_needed = yield b''
+                        if frames_needed is None:
+                            return
+                        continue
+
+                    # Calculate bytes needed for requested frames
+                    if frames_needed is not None and frames_needed > 0:
+                        bytes_needed = frames_needed * bytes_per_frame
                     else:
-                        device.write(chunk)
+                        # Fallback: return what's left
+                        bytes_needed = min(8192, total_bytes - position[0])
+
+                    # Get chunk
+                    chunk = samples_bytes[position[0]:position[0] + bytes_needed]
+                    position[0] += len(chunk)
+
+                    # Pad with silence if needed
+                    if len(chunk) < bytes_needed and chunk:
+                        chunk += b'\x00' * (bytes_needed - len(chunk))
+
+                    # Yield chunk and receive next framecount
+                    frames_needed = yield chunk
+
+            # Play using device with generator callback
+            device = miniaudio.PlaybackDevice(
+                sample_rate=decoded.sample_rate,
+                output_format=decoded.sample_format,
+                nchannels=decoded.nchannels,
+                buffersize_msec=100
+            )
+
+            # Create and prime the generator
+            gen = stream_generator()
+            next(gen)  # Prime the generator - advance to first yield
+            device.start(gen)
+
+            # Wait until playback finishes (non-blocking for other threads)
+            while position[0] < total_bytes:
+                time.sleep(0.01)
+
+            time.sleep(0.1)  # Small buffer to ensure last chunk plays
+            device.stop()
+            device.close()
 
         except Exception as e:
-            logger.error(f"Error in sound playback thread: {e}")
+            logger.error(f"Error in sound playback thread: {e}", exc_info=True)
 
     def play_music(self, file_path: Path, volume: float = 1.0, start_pos: float = 0.0) -> bool:
         """

@@ -30,6 +30,10 @@ class MemoryGameScene(BaseScene):
         self.moves: int = 0
         self.game_won: bool = False
 
+        # Sound file paths (use project root assets)
+        project_root = Path(__file__).parent.parent.parent
+        self.sound_dir = project_root / "assets" / "sound"
+
     async def on_enter(self) -> None:
         """Initialize game."""
         logger.info("Starting Memory Game")
@@ -208,6 +212,9 @@ class MemoryGameScene(BaseScene):
         # Reveal card
         self.revealed[idx] = True
 
+        # Play card flip sound
+        self._play_sound("select.mp3", volume=0.05)
+
         # Render face
         if isinstance(self.cards, list) and isinstance(self.cards[0], Path):
             self._render_card_face(row, col, idx)
@@ -237,6 +244,9 @@ class MemoryGameScene(BaseScene):
                 self.matched.add(idx)
                 self.score += 10
 
+                # Play match sound
+                self._play_sound("coin.mp3", volume=0.05)
+
                 # Play success animation
                 await self._play_match_animation()
 
@@ -247,6 +257,9 @@ class MemoryGameScene(BaseScene):
             else:
                 # No match
                 logger.debug(f"No match: {self.first_card} and {idx}")
+
+                # Play mismatch sound
+                self._play_sound("hit.mp3", volume=0.05)
 
                 # Play mismatch animation
                 await self._play_mismatch_animation()
@@ -322,6 +335,9 @@ class MemoryGameScene(BaseScene):
         # Set game won flag
         self.game_won = True
 
+        # Play victory sound
+        self._play_sound("victory_long.mp3", volume=0.05)
+
         # Show celebration
         for row in range(3):
             for col in range(5):
@@ -347,6 +363,29 @@ class MemoryGameScene(BaseScene):
 
         # Don't automatically return - wait for user to press back button
         logger.info("Victory! Press back button to return to menu")
+
+    def _play_sound(self, filename: str, volume: float = 0.05) -> None:
+        """
+        Play a sound effect.
+
+        Args:
+            filename: Sound file name (e.g., "coin.mp3")
+            volume: Volume level (0.0-1.0)
+        """
+        try:
+            sound_path = self.sound_dir / filename
+            if not sound_path.exists():
+                logger.debug(f"Sound file not found: {sound_path}")
+                return
+
+            sound_manager = self.runtime.device.sound_manager
+            if sound_manager and sound_manager.is_available():
+                sound_manager.play_sound(sound_path, volume=volume)
+                logger.debug(f"Playing sound: {filename} at volume {volume}")
+            else:
+                logger.debug("Sound manager not available")
+        except Exception as e:
+            logger.debug(f"Error playing sound {filename}: {e}")
 
     async def on_exit(self) -> None:
         """Cleanup on exit."""
