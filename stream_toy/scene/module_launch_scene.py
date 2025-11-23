@@ -78,14 +78,16 @@ class ModuleLaunchScene(MenuScene):
 
             logger.debug(f"Added module to launcher: {module.manifest.name} at ({row},{col})")
 
-        # Bottom-right: System menu placeholder
+        # Bottom-right: System menu
+        # TAP: Show about/info screen
+        # LONG-PRESS: Exit/shutdown the application
         items.append(MenuItem(
             row=2,
             col=4,
             label="⚙",  # Settings/system
             action=ButtonAction(
                 on_tap=self.show_about,
-                on_long_press=self.shutdown_system
+                on_long_press=self.shutdown_system  # Exit app (useful for development)
             )
         ))
 
