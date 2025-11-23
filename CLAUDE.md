@@ -193,6 +193,8 @@ Use the venv in .venv-emulator with requirements-emulator.
 
 ### Emulator test 
 - The repository includes a pure‑Python Stream Dock emulator with a web interface.
+- The emulator should run without ALSA/sound output and any other hardware related functionality. It will not have 
+  access to the keyboard device connected via USB or LED control. 
 
 ### Writing new tests
 - Create test files under `tests/` named `test_*.py`.
@@ -228,3 +230,4 @@ Use the venv in .venv-emulator with requirements-emulator.
 - Never use hardcoded paths. Always use a path relative to our modules.
 - Don't create test scripts. Write unittests in the tests directory.
 - You are running in a container and can't access ALSA or the physical device.
+- Acknowledge every time you read CLAUDE.md and output a line so the user knows.
