@@ -553,6 +553,10 @@ class BaseScene(ABC):
             for col in range(self.device.TILE_COLS):
                 self.clear_tile(row, col, color)
 
+        # Force submit to ensure tiles are actually cleared on the device
+        # This is important when switching scenes to prevent old content from persisting
+        self.submit_tiles()
+
     def submit_tiles(self) -> None:
         """Submit all queued tile updates to all devices via central state."""
         self.state_manager.submit()
