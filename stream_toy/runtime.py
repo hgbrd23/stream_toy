@@ -329,6 +329,11 @@ class StreamToyRuntime:
 
     def shutdown(self) -> None:
         """Graceful shutdown of the system."""
+        # Make shutdown idempotent - can be called multiple times
+        if not self._running:
+            logger.debug("Shutdown already in progress or complete")
+            return
+
         logger.info("Shutting down StreamToy Runtime")
 
         # Stop running
@@ -347,4 +352,5 @@ class StreamToyRuntime:
                 logger.error(f"Error closing device: {e}", exc_info=True)
 
         logger.info("StreamToy Runtime shutdown complete")
-        sys.exit(0)
+        # Don't call sys.exit() here - let the event loop finish naturally
+        # The finally block in start() will also call shutdown (which is now idempotent)
