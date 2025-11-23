@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Type
 import logging
 import sys
+import time
 
 from .device.stream_toy_device import StreamToyDevice
 from .device.streamdock293v3_device import StreamDock293V3Device
@@ -107,6 +108,54 @@ class StreamToyRuntime:
 
                 self.devices.append(hw_device)
                 logger.info("Hardware device initialized successfully")
+
+                # Display splashscreen and wait for ACK
+                splashscreen_path = Path(__file__).parent.parent / "assets" / "tiles" / "splashscreen.png"
+                if splashscreen_path.exists():
+                    logger.info("Displaying splashscreen...")
+                    if hw_device.set_background_image(splashscreen_path, wait_for_ack=True, timeout=10.0):
+                        logger.info("Splashscreen displayed successfully")
+
+                        # Wait up to 5 seconds, but abort if any button is pressed
+                        logger.info("Waiting 5 seconds (press any button to skip)...")
+                        button_pressed = [False]  # Use list to allow modification in nested callback
+
+                        def skip_callback(row: int, col: int, is_pressed: bool):
+                            """Temporary callback to detect button press and skip wait."""
+                            if is_pressed:
+                                button_pressed[0] = True
+                                logger.info(f"Button pressed at ({row},{col}) - skipping wait")
+
+                        # Temporarily register skip callback
+                        original_callback = hw_device._key_callback
+                        hw_device.register_key_callback(skip_callback)
+
+                        # Wait up to 5 seconds, checking for button press every 100ms
+                        start_time = time.time()
+                        while time.time() - start_time < 5.0:
+                            if button_pressed[0]:
+                                elapsed = time.time() - start_time
+                                logger.info(f"Wait aborted after {elapsed:.1f}s")
+                                break
+                            time.sleep(0.1)
+                        else:
+                            logger.info("Wait completed (5s)")
+
+                        # Restore original callback
+                        hw_device.register_key_callback(original_callback)
+
+                        # Clear screen with black background
+                        logger.info("Clearing screen with black background...")
+                        black_bg_path = self._ensure_black_background()
+                        if hw_device.set_background_image(black_bg_path, wait_for_ack=True, timeout=10.0):
+                            logger.info("Screen cleared to black successfully")
+                        else:
+                            logger.warning("Failed to clear screen to black")
+                    else:
+                        logger.warning("Failed to display splashscreen")
+                else:
+                    logger.warning(f"Splashscreen not found: {splashscreen_path}")
+
             except Exception as e:
                 logger.error(f"Failed to initialize hardware device: {e}", exc_info=True)
                 if not self.enable_web:
@@ -200,6 +249,32 @@ class StreamToyRuntime:
             if self.state_manager.led_manager:
                 self.state_manager.led_manager.set_all((0, 40, 40))
                 logger.info("Using fallback: set LEDs to dim cyan")
+
+    def _ensure_black_background(self) -> Path:
+        """
+        Ensure a black 800x480 background image exists.
+
+        Creates the image if it doesn't exist and returns its path.
+
+        Returns:
+            Path to black background image
+        """
+        from PIL import Image
+
+        assets_dir = Path(__file__).parent.parent / "assets" / "tiles"
+        black_bg_path = assets_dir / "black_background.png"
+
+        # Create if doesn't exist
+        if not black_bg_path.exists():
+            logger.info(f"Creating black background image: {black_bg_path}")
+            # Create 800x480 black image
+            black_img = Image.new('RGB', (800, 480), color=(0, 0, 0))
+            black_img.save(black_bg_path, format='PNG')
+            logger.info("Black background image created")
+        else:
+            logger.debug(f"Black background image already exists: {black_bg_path}")
+
+        return black_bg_path
 
     def get_available_modules(self) -> List[StreamToyModule]:
         """
