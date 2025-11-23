@@ -9,9 +9,28 @@
 # - Creates virtual environment and installs Python dependencies
 # - Creates systemd service for autostart
 #
-# Usage: sudo ./install.sh
+# Usage: sudo ./install.sh [--keep-venv]
+#
+# Options:
+#   --keep-venv    Keep existing virtual environment (skip venv deletion)
 
 set -e  # Exit on any error
+
+# Parse command line arguments
+KEEP_VENV=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --keep-venv)
+            KEEP_VENV=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: sudo ./install.sh [--keep-venv]"
+            exit 1
+            ;;
+    esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -271,15 +290,20 @@ install_application() {
 setup_venv() {
     log_info "Setting up Python virtual environment..."
 
-    # Remove old venv if exists
-    if [ -d "$VENV_DIR" ]; then
-        log_warning "Removing old virtual environment"
-        rm -rf "$VENV_DIR"
-    fi
+    # Check if we should keep existing venv
+    if [ "$KEEP_VENV" = true ] && [ -d "$VENV_DIR" ]; then
+        log_info "Keeping existing virtual environment (--keep-venv specified)"
+    else
+        # Remove old venv if exists
+        if [ -d "$VENV_DIR" ]; then
+            log_warning "Removing old virtual environment"
+            rm -rf "$VENV_DIR"
+        fi
 
-    # Create virtual environment
-    log_info "Creating virtual environment at $VENV_DIR"
-    python3 -m venv "$VENV_DIR"
+        # Create virtual environment
+        log_info "Creating virtual environment at $VENV_DIR"
+        python3 -m venv "$VENV_DIR"
+    fi
 
     # Activate venv and upgrade pip
     log_info "Upgrading pip..."
