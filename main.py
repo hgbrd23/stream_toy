@@ -10,6 +10,18 @@ import argparse
 import logging
 import os
 import sys
+from pathlib import Path
+
+# Add StreamDock SDK to Python path
+# SDK is located at: <project_root>/StreamDock-Device-SDK/Python-Linux-SDK/src/
+script_dir = Path(__file__).parent.resolve()
+sdk_path = script_dir / "StreamDock-Device-SDK" / "Python-Linux-SDK" / "src"
+if sdk_path.exists():
+    sys.path.insert(0, str(sdk_path))
+    print(f"Added StreamDock SDK to path: {sdk_path}")
+else:
+    print(f"Warning: StreamDock SDK not found at {sdk_path}")
+
 from stream_toy.runtime import StreamToyRuntime
 
 

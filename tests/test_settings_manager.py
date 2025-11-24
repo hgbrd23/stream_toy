@@ -88,12 +88,12 @@ class TestSettingsManager(unittest.TestCase):
         self.assertEqual(loaded_volume, 0.15, "Volume below cap should not be affected")
 
     def test_volume_clamping(self):
-        """Test that volume is clamped to valid range (0.0-0.3)."""
+        """Test that volume is clamped to valid range (0.0-0.75)."""
         settings = SettingsManager(self.settings_path)
 
         # Test upper bound
         settings.set_volume(1.5)
-        self.assertEqual(settings.get_volume(), 0.3, "Volume should be clamped to 0.3 (MAX_VOLUME)")
+        self.assertEqual(settings.get_volume(), 0.75, "Volume should be clamped to 0.75 (MAX_VOLUME)")
 
         # Test lower bound
         settings.set_volume(-0.5)

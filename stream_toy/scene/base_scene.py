@@ -13,6 +13,9 @@ import asyncio
 import logging
 import os
 import hashlib
+import threading
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 if TYPE_CHECKING:
     from ..runtime import StreamToyRuntime
@@ -22,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 # Module-level font cache to avoid reloading fonts
 _FONT_CACHE: Dict[Tuple[str, int], ImageFont.FreeTypeFont] = {}
+
+# Module-level lock for thread-safe cache writes
+_CACHE_LOCK = threading.Lock()
+
+# Thread pool for CPU-intensive image operations (avoid blocking event loop)
+_IMAGE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ImageGen")
 
 
 class BaseScene(ABC):
@@ -121,7 +130,10 @@ class BaseScene(ABC):
 
     def _cache_image(self, cache_key: str, image: Image.Image) -> Path:
         """
-        Save a PIL Image to the file cache.
+        Save a PIL Image to the file cache using atomic writes.
+
+        Thread-safe implementation prevents race conditions where multiple
+        threads try to write the same cache file simultaneously.
 
         Args:
             cache_key: Unique identifier for the image
@@ -132,12 +144,77 @@ class BaseScene(ABC):
         """
         cache_path = self._get_cache_path(cache_key)
 
-        # Save to cache if not already there
-        if not cache_path.exists():
-            image.save(cache_path, format='PNG')
-            logger.debug(f"Cached image to: {cache_path.name}")
+        # Thread-safe check and write with lock
+        with _CACHE_LOCK:
+            # Double-check if file exists (another thread might have created it)
+            if cache_path.exists():
+                logger.debug(f"Cache already exists: {cache_path.name}")
+                return cache_path
+
+            # Atomic write: write to temp file, then rename
+            tmp_path = None
+            try:
+                import uuid
+                tmp_filename = f".tmp_{uuid.uuid4().hex[:8]}_{cache_path.name}"
+                tmp_path = cache_path.parent / tmp_filename
+
+                # Convert to RGB if needed
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+
+                # Save and atomically rename
+                image.save(tmp_path, format='PNG', optimize=False)
+                tmp_path.rename(cache_path)
+                logger.debug(f"Cached image to: {cache_path.name}")
+
+            except Exception as e:
+                logger.error(f"Error caching image {cache_path.name}: {e}")
+                if tmp_path and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                raise
 
         return cache_path
+
+    def _cache_image_locked(self, cache_key: str, image: Image.Image, cache_path: Path) -> None:
+        """
+        Save PIL Image to cache. Must be called while holding _CACHE_LOCK.
+
+        Args:
+            cache_key: Unique identifier for logging
+            image: PIL Image to cache
+            cache_path: Pre-computed cache path
+        """
+        # Atomic write: write to temp file, then rename
+        tmp_path = None
+        try:
+            # Generate unique temp filename
+            import uuid
+            tmp_filename = f".tmp_{uuid.uuid4().hex[:8]}_{cache_path.name}"
+            tmp_path = cache_path.parent / tmp_filename
+
+            # Convert image to RGB if needed (ensure consistent format)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            # Save to temp file
+            image.save(tmp_path, format='PNG', optimize=False)
+
+            # Atomic rename
+            tmp_path.rename(cache_path)
+            logger.debug(f"Cached image to: {cache_path.name}")
+
+        except Exception as e:
+            logger.error(f"Error caching image {cache_path.name}: {e}", exc_info=True)
+            # Clean up temp file
+            if tmp_path and tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+            raise
 
     def _get_font(self, font_size: int) -> ImageFont.FreeTypeFont:
         """
@@ -420,36 +497,75 @@ class BaseScene(ABC):
 
         # Generate cache key based on image path and text overlay parameters
         cache_key = f"img_text|{image_path}|{text}|fs{font_size}|fg{fg_color}|op{bg_opacity}|ts{self.device.TILE_SIZE}"
+        cache_path = self._get_cache_path(cache_key)
 
-        # Check if we have this image cached
-        if self._is_cached(cache_key):
-            cache_path = self._get_cache_path(cache_key)
-            logger.debug(f"Using cached image+text: {cache_path.name}")
-            self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
+        # Thread-safe: check cache and generate inside lock to prevent duplicate work
+        with _CACHE_LOCK:
+            # Check if already cached
+            if cache_path.exists():
+                logger.debug(f"Using cached image+text: {cache_path.name}")
+                self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
+                return
+
+            # Generate the composite image (inside lock to prevent concurrent generation)
+            img = self._generate_image_with_text(image_path, text, font_size, fg_color, bg_opacity, wrap)
+            if img is None:
+                # Image generation failed - fall back to text only (outside lock)
+                pass
+            else:
+                # Cache it (we're already inside the lock)
+                self._cache_image_locked(cache_key, img, cache_path)
+
+        # If generation failed, use text-only fallback
+        if img is None:
+            self.set_tile_text(row, col, text, font_size=font_size, fg_color=fg_color, wrap=wrap)
             return
 
-        # Load and resize image
-        img = Image.open(image_path)
-        if img.size != (self.device.TILE_SIZE, self.device.TILE_SIZE):
-            img = img.resize((self.device.TILE_SIZE, self.device.TILE_SIZE), Image.LANCZOS)
+        # Send to display
+        self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
 
-        # Convert to RGB if needed
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
+    def _generate_image_with_text(
+        self,
+        image_path: str,
+        text: str,
+        font_size: int,
+        fg_color: str,
+        bg_opacity: float,
+        wrap: bool
+    ) -> Image.Image:
+        """Generate composite image with text overlay. Returns None on error."""
+        # Load and process image
+        try:
+            img = Image.open(image_path)
+            img.load()
+
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            if img.size != (self.device.TILE_SIZE, self.device.TILE_SIZE):
+                img = img.resize((self.device.TILE_SIZE, self.device.TILE_SIZE), Image.LANCZOS)
+
+        except Exception as e:
+            logger.error(f"Error loading cover art {image_path}: {e}")
+            return None
 
         # Create a semi-transparent overlay for text background
         overlay = Image.new('RGBA', (self.device.TILE_SIZE, self.device.TILE_SIZE), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
+        draw_overlay = ImageDraw.Draw(overlay)
 
-        # Add semi-transparent black background at bottom for text
+        # Add semi-transparent black background at bottom
         bg_alpha = int(255 * bg_opacity)
-        draw.rectangle([(0, self.device.TILE_SIZE - 40), (self.device.TILE_SIZE, self.device.TILE_SIZE)],
-                      fill=(0, 0, 0, bg_alpha))
+        draw_overlay.rectangle([(0, self.device.TILE_SIZE - 40), (self.device.TILE_SIZE, self.device.TILE_SIZE)],
+                              fill=(0, 0, 0, bg_alpha))
 
-        # Convert overlay to RGB and composite
-        img = img.convert('RGBA')
-        img = Image.alpha_composite(img, overlay)
-        img = img.convert('RGB')
+        # Convert image to RGBA for compositing
+        img_rgba = img.convert('RGBA')
+
+        # Composite the overlay onto the image
+        img_composited = Image.alpha_composite(img_rgba, overlay)
+
+        # Convert final result back to RGB
+        img = img_composited.convert('RGB')
 
         # Draw text on top
         draw = ImageDraw.Draw(img)
@@ -514,9 +630,8 @@ class BaseScene(ABC):
                 y = y_start + (i * line_height)
                 draw.text((x, y), line, fill=fg_color, font=font)
 
-        # Cache the generated image to file and send path to central state
-        cache_path = self._cache_image(cache_key, img)
-        self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
+        # Return the generated composite image
+        return img
 
     def clear_tile(self, row: int, col: int, color: str = "black") -> None:
         """

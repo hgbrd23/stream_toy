@@ -10,6 +10,7 @@ rpi_ws281x>=5.0  # For Raspberry Pi
 # Audio support
 miniaudio>=1.59  # For audio decoding and playback (MP3, WAV, FLAC, etc.)
 PyAudio>=0.2.13  # Low-level audio I/O
+pyalsaaudio>=0.10  # ALSA mixer control for hardware volume
 
 flask>=2.3
 flask-socketio>=5.3

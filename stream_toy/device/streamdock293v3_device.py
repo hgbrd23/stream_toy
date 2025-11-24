@@ -258,8 +258,14 @@ class StreamDock293V3Device(StreamToyDevice):
             # Convert to native format
             native_image = self._to_native_format(image)
 
-            # Save as JPEG with high quality
-            native_image.save(cache_path, format='JPEG', quality=95)
+            # Save as JPEG with quality=85
+            # Lower quality (85 vs 95) prevents corruption on hardware device
+            # Likely due to smaller file size fitting device buffer limits
+            native_image.save(
+                cache_path,
+                format='JPEG',
+                quality=85
+            )
 
             logger.info(f"Cache generated: {cache_path}")
 
@@ -533,6 +539,7 @@ class StreamDock293V3Device(StreamToyDevice):
             # Import ctypes for direct transport call
             import ctypes
 
+            tile_count = 0
             for (row, col), (image_path, cache_key) in changed_tiles.items():
                 # Convert tile coordinates to physical button index (1-15)
                 button_idx = self.TILE_TO_BUTTON.get((row, col))
@@ -570,9 +577,7 @@ class StreamDock293V3Device(StreamToyDevice):
             num_tiles = len(self._tile_queue)
             self._tile_queue.clear()
 
-            # Refresh device (fire and forget for tile updates)
-            # Note: No need to wait for ACK when updating tiles.
-            # ACK is only needed for full screen background image updates.
+            # Refresh device once after all tiles
             self.sdk_device.refresh()
             logger.debug(f"Submitted {num_tiles} tile update(s)")
 

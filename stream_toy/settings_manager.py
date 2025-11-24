@@ -30,7 +30,7 @@ class SettingsManager:
     }
 
     # Maximum allowed volume (safety limit for children's toy)
-    MAX_VOLUME = 0.3
+    MAX_VOLUME = 0.75
 
     # Maximum allowed volume on startup (safety limit for children's toy)
     MAX_STARTUP_VOLUME = 0.2

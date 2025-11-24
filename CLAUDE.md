@@ -39,6 +39,34 @@ Button presses can be detected, even while the device is refreshing.
 - Avoid full screen background images if possible - use tiles instead
 - Only use background images for static content that rarely changes
 
+## Native JPEG Encoding for Button Tiles
+
+The StreamDock 293V3 requires button images to be in JPEG format (112x112 pixels, rotated 180°). The device has specific limitations:
+
+**JPEG Quality Setting:**
+- **MUST use quality=85** when saving native JPEG files
+- Higher quality (95) creates larger files that cause display corruption
+- The device likely has buffer size limits that are exceeded with high-quality JPEGs
+- This is especially critical for composite images with:
+  - Alpha blending (semi-transparent overlays)
+  - Text rendering (creates sharp edges)
+  - Multiple color gradients
+
+**Why This Matters:**
+- PNG cache files in `data/cache/scene_tiles/` display correctly in web emulator
+- Native JPEG cache files (`*_native.jpg`) are generated on-demand for hardware
+- If JPEG quality is too high, images display corrupted ONLY on hardware device (not in emulator or on PC)
+
+**Implementation:**
+```python
+native_image.save(cache_path, format='JPEG', quality=85)
+```
+
+**Symptoms of Incorrect Quality:**
+- Web emulator shows images correctly
+- Real device shows corrupted/broken images (looks like partial JPEG decode failure)
+- Downloading the JPEG files and viewing on PC shows no corruption
+
 # Neopixel LEDs
 Neopixel WS2812b (eco) LEDs are connected to GPIO 10 of the RPI.
 
@@ -227,6 +255,7 @@ Use the venv in .venv-emulator with requirements-emulator.
 - Don't add ENV/configuration unless explicitly asked.
 - Don't reimplement stuff that is in the libraries unless explicitly asked. If you think it would be better ask the user.
 - When improving code, don't create a new version of anything. Refactor the existing one or create a new one and remove the old one.
+- When fixing something and your code did not fix the problem, remove it unless it provides some very clear benefits.
 - Never use hardcoded paths. Always use a path relative to our modules.
 - Don't create test scripts. Write unittests in the tests directory.
 - You are running in a container and can't access ALSA or the physical device.
