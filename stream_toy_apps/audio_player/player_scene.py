@@ -13,6 +13,7 @@ import time
 from stream_toy.scene.base_scene import BaseScene
 from stream_toy.sound_manager import PlaybackStatus
 from stream_toy.audio_metadata_service import AudioMetadataService
+from stream_toy.settings_manager import SettingsManager
 
 logger = logging.getLogger(__name__)
 
@@ -125,14 +126,17 @@ class PlayerScene(BaseScene):
             except asyncio.CancelledError:
                 pass
 
-        # Save current position before exiting (if still playing or paused)
+        # Save current position before exiting (unless finished)
         sound_mgr = self.runtime.device.sound_manager
         if sound_mgr:
+            position = sound_mgr.get_position()
+            duration = sound_mgr.get_duration()
             status = sound_mgr.get_status()
-            if status in (PlaybackStatus.PLAYING, PlaybackStatus.PAUSED):
-                position = sound_mgr.get_position()
+
+            # Save unless we're at the very end (finished playback)
+            if position > 0 and not (duration > 0 and position >= duration - 1.0):
                 self.metadata.set_playback_position(position)
-                logger.info(f"Saved playback position on exit: {position:.1f}s")
+                logger.info(f"Saved playback position on exit: {position:.1f}s (status: {status})")
 
             # Clear callbacks (but don't stop playback - let browser scene handle that)
             sound_mgr.set_status_callback(None)
@@ -141,28 +145,28 @@ class PlayerScene(BaseScene):
     async def render_ui(self):
         """Render all player controls."""
         # Row 0: Skip controls
-        self.set_tile_text(0, 0, "<<\n10min", font_size=12)
-        self.set_tile_text(0, 1, "<<\n1min", font_size=12)
-        self.set_tile_text(0, 2, "<<\n10s", font_size=14)
-        self.set_tile_text(0, 3, ">>\n10s", font_size=14)
-        self.set_tile_text(0, 4, ">>\n1min", font_size=12)
+        self.set_tile_text(0, 0, "<<\n10min", font_size=13)
+        self.set_tile_text(0, 1, "<<\n1min", font_size=13)
+        self.set_tile_text(0, 2, "<<\n10s", font_size=15)
+        self.set_tile_text(0, 3, ">>\n10s", font_size=15)
+        self.set_tile_text(0, 4, ">>\n1min", font_size=13)
 
         # Row 1: Volume, pause, and cover art
-        self.set_tile_text(1, 0, "Vol\n-", font_size=16)
+        self.set_tile_text(1, 0, "Vol\n-", font_size=17)
         await self._update_pause_button()
-        self.set_tile_text(1, 2, "Vol\n+", font_size=16)
+        self.set_tile_text(1, 2, "Vol\n+", font_size=17)
 
         # Show cover art if available, otherwise empty
         if self.cover_art:
             self.set_tile_file(1, 3, str(self.cover_art))
         else:
-            self.set_tile_text(1, 3, "", font_size=12)
+            self.set_tile_text(1, 3, "", font_size=13)
 
-        self.set_tile_text(1, 4, "", font_size=12)  # Empty
+        self.set_tile_text(1, 4, "", font_size=13)  # Empty
 
         # Row 2: Time display and back button
         await self._update_time_display()
-        self.set_tile_text(2, 4, "←\nBack", font_size=16)
+        self.set_tile_text(2, 4, "←\nBack", font_size=17)
 
         self.submit_tiles()
 
@@ -195,19 +199,19 @@ class PlayerScene(BaseScene):
 
         status = sound_mgr.get_status()
         if status == PlaybackStatus.PLAYING:
-            self.set_tile_text(1, 1, "❚❚\nPause", font_size=14)
+            self.set_tile_text(1, 1, "❚❚\nPause", font_size=15)
         elif status == PlaybackStatus.PAUSED:
-            self.set_tile_text(1, 1, "▶\nPlay", font_size=16)
+            self.set_tile_text(1, 1, "▶\nPlay", font_size=17)
         else:  # STOPPED
             # Check if stopped at the end (finished) or just stopped
             position = sound_mgr.get_position()
             duration = sound_mgr.get_duration()
             if duration > 0 and position >= duration - 1.0:
                 # Finished playing - show replay option
-                self.set_tile_text(1, 1, "↻\nReplay", font_size=14)
+                self.set_tile_text(1, 1, "↻\nReplay", font_size=15)
             else:
                 # Stopped for other reason
-                self.set_tile_text(1, 1, "▶\nPlay", font_size=16)
+                self.set_tile_text(1, 1, "▶\nPlay", font_size=17)
 
     async def _update_time_display(self, force_all: bool = False):
         """
@@ -236,19 +240,19 @@ class PlayerScene(BaseScene):
             progress = 0
 
         # ALWAYS update: Position (2,0) - changes every second
-        self.set_tile_text(2, 0, f"{pos_min}:{pos_sec:02d}", font_size=18)
+        self.set_tile_text(2, 0, f"{pos_min}:{pos_sec:02d}", font_size=19)
 
         # ALWAYS update: Progress (2,2) - changes as position changes
-        self.set_tile_text(2, 2, f"{progress:.0f}%", font_size=18)
+        self.set_tile_text(2, 2, f"{progress:.0f}%", font_size=19)
 
         # Only update static tiles on first call or when forced
         if not self._static_tiles_initialized or force_all:
             # STATIC: Duration (2,1) - doesn't change after file starts
-            self.set_tile_text(2, 1, f"{dur_min}:{dur_sec:02d}", font_size=18)
+            self.set_tile_text(2, 1, f"{dur_min}:{dur_sec:02d}", font_size=19)
 
             # STATIC: Filename (2,3) - doesn't change
             filename = self.audio_file.stem
-            self.set_tile_text(2, 3, filename, font_size=10, wrap=True)
+            self.set_tile_text(2, 3, filename, font_size=11, wrap=True)
 
             self._static_tiles_initialized = True
             logger.debug("Updated static tiles (duration, filename)")
@@ -257,9 +261,9 @@ class PlayerScene(BaseScene):
         """Show error message."""
         for row in range(3):
             for col in range(5):
-                self.set_tile_text(row, col, "", font_size=12)
+                self.set_tile_text(row, col, "", font_size=13)
 
-        self.set_tile_text(1, 2, message, font_size=16)
+        self.set_tile_text(1, 2, message, font_size=17)
         self.submit_tiles()
 
     async def _update_loop(self):
@@ -368,7 +372,7 @@ class PlayerScene(BaseScene):
                 sound_mgr.stop()  # Ensure clean state
                 sound_mgr.play_music(self.audio_file, volume=self.current_volume)
         elif button == self.BTN_VOL_UP:
-            self.current_volume = min(0.3, self.current_volume + 0.05)
+            self.current_volume = min(SettingsManager.MAX_VOLUME, self.current_volume + 0.05)
             sound_mgr.set_volume(self.current_volume)
             logger.info(f"Volume: {self.current_volume:.2f}")
 
@@ -388,9 +392,16 @@ class PlayerScene(BaseScene):
         # Import here to avoid circular dependency
         from .main import AudioPlayerScene
 
-        # Stop playback when going back
+        # Save current position BEFORE stopping playback
         sound_mgr = self.runtime.device.sound_manager
-        if sound_mgr:
+        if sound_mgr and sound_mgr.is_available():
+            status = sound_mgr.get_status()
+            if status in (PlaybackStatus.PLAYING, PlaybackStatus.PAUSED):
+                position = sound_mgr.get_position()
+                self.metadata.set_playback_position(position)
+                logger.info(f"Saved playback position before going back: {position:.1f}s")
+
+            # Now stop playback
             sound_mgr.stop()
 
         # Switch to browser scene, passing the directory to return to

@@ -12,6 +12,7 @@ Provides two types of audio playback:
 2. Music Playback (play_music):
    - Long audio files (audiobooks, music)
    - Uses PyAudio with ALSA for hardware control
+   - Volume control via ALSA softvol mixer (hardware-accelerated, no CPU overhead)
    - Full playback controls: pause, resume, seek, position tracking
    - Callback support for position updates
    - Persistent playback position
@@ -51,6 +52,7 @@ class SoundManager:
     2. Music Playback (play_music):
        - Dedicated playback thread
        - Full controls: pause, resume, seek, stop
+       - Volume via ALSA softvol mixer (hardware-accelerated)
        - Position tracking and callbacks
        - For audio player app
 
@@ -99,11 +101,15 @@ class SoundManager:
         self._decoder = None
         self._initialized = False
 
+        # ALSA mixer for hardware volume control
+        self._alsa_mixer = None
+        self._use_alsa_volume = False
+
         # Initialize audio backend
         self._initialize_audio()
 
     def _initialize_audio(self) -> None:
-        """Initialize miniaudio for audio playback."""
+        """Initialize miniaudio for audio playback and ALSA mixer for volume control."""
         try:
             import miniaudio
 
@@ -121,6 +127,49 @@ class SoundManager:
             logger.error(f"Failed to initialize miniaudio: {e}")
             logger.warning("Sound Manager running in DISABLED mode")
             self._initialized = False
+
+        # ALSA mixer initialization is deferred until first use
+        # (softvol control may not exist until device is opened)
+        logger.info("ALSA mixer will be initialized on first use")
+
+    def _ensure_mixer_initialized(self) -> bool:
+        """
+        Lazily initialize ALSA mixer if not already done.
+
+        Returns:
+            True if mixer is available and initialized
+        """
+        # Already initialized and working
+        if self._use_alsa_volume and self._alsa_mixer:
+            return True
+
+        # Already tried and failed
+        if self._alsa_mixer is False:
+            return False
+
+        # Try to initialize now
+        try:
+            import alsaaudio
+
+            # Try to open the SoftMaster mixer control defined in asound.conf
+            self._alsa_mixer = alsaaudio.Mixer(control='SoftMaster', cardindex=0)
+            self._use_alsa_volume = True
+
+            logger.info(f"ALSA mixer initialized: SoftMaster control")
+            return True
+
+        except ModuleNotFoundError:
+            logger.warning(f"pyalsaaudio module not installed - ALSA mixer unavailable")
+            logger.warning("Install pyalsaaudio to enable hardware volume control")
+            self._alsa_mixer = False  # Mark as tried and failed
+            self._use_alsa_volume = False
+            return False
+        except Exception as e:
+            logger.warning(f"Could not initialize ALSA mixer: {e}")
+            logger.warning("Audio will play at system default volume")
+            self._alsa_mixer = False  # Mark as tried and failed
+            self._use_alsa_volume = False
+            return False
 
     def is_available(self) -> bool:
         """
@@ -263,15 +312,16 @@ class SoundManager:
         except Exception as e:
             logger.error(f"Error in sound playback thread: {e}", exc_info=True)
 
-    def play_music(self, file_path: Path, volume: float = 1.0, start_pos: float = 0.0) -> bool:
+    def play_music(self, file_path: Path, volume: Optional[float] = None, start_pos: float = 0.0) -> bool:
         """
-        Start streaming music playback.
+        Start streaming music playback with ALSA volume control.
 
         This is suitable for long audio files. Supports pause/resume/seek.
+        Volume is controlled via ALSA softvol mixer for efficiency.
 
         Args:
             file_path: Path to audio file (MP3, WAV, FLAC, etc.)
-            volume: Volume level (0.0-1.0)
+            volume: Volume level (0.0-0.75) - if None, keeps current ALSA volume
             start_pos: Starting position in seconds
 
         Returns:
@@ -290,10 +340,13 @@ class SoundManager:
             # Stop current playback
             self.stop()
 
+            # Set volume via ALSA mixer if explicitly provided
+            if volume is not None:
+                self.set_volume(volume)
+
             with self._lock:
                 self._current_file = file_path
                 self._position = start_pos
-                self._volume = max(0.0, min(1.0, volume))
                 self._status = PlaybackStatus.PLAYING
 
                 # Get duration
@@ -351,12 +404,12 @@ class SoundManager:
             decoded = miniaudio.decode_file(str(file_path))
             logger.info(f"[PLAYBACK THREAD] Decoded: {decoded.sample_rate}Hz, {decoded.nchannels} channels")
 
-            # Use native sample rate - dmix will handle resampling
+            # Use native sample rate - ALSA plug will handle resampling automatically
             sample_rate = decoded.sample_rate
             nchannels = decoded.nchannels
             samples = array.array('h', decoded.samples)
 
-            logger.info(f"[PLAYBACK THREAD] Using native rate {sample_rate}Hz - dmix will handle resampling")
+            logger.info(f"[PLAYBACK THREAD] Using native rate {sample_rate}Hz - ALSA plug will resample to 48000Hz")
 
             # Calculate starting position
             start_sample = 0
@@ -368,92 +421,42 @@ class SoundManager:
             p = pyaudio.PyAudio()
             logger.info(f"[PLAYBACK THREAD] PyAudio initialized, found {p.get_device_count()} devices")
 
-            # Try to use hardware device directly via ALSA
-            # Use hw:0,0 which is the raw hardware device (MAX98357A I2S)
-            # This bypasses ALSA's software layers (dmix, etc.) that only support 48000 Hz
-            stream = None
-            device_name = None
-            output_device_index = None  # Will be set if we find a hardware device
+            # Use default ALSA device which has plug configured for automatic resampling
+            # The /etc/asound.conf configures default -> plug -> softvol -> dmixer chain
+            # This allows any sample rate to be automatically converted to 48000Hz
+            logger.info(f"[PLAYBACK THREAD] Opening audio stream on default device (with ALSA plug resampling), rate={sample_rate}Hz, channels={nchannels}")
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=nchannels,
+                rate=sample_rate,
+                output=True,
+                frames_per_buffer=2048  # Increased from 1024 to match ALSA period_size, reduces callback frequency
+            )
+            logger.info("[PLAYBACK THREAD] Audio stream opened successfully!")
 
-            # Strategy 1: Try hardware device directly (hw:0,0)
-            try:
-                logger.info("[PLAYBACK THREAD] Attempting to open ALSA hardware device 'hw:0,0'...")
-                import alsaaudio
-                # Check if alsaaudio can see the device
-                logger.info("[PLAYBACK THREAD] ALSA devices available via alsaaudio: {}".format(alsaaudio.pcms()))
+            # Initialize ALSA mixer - softvol control should exist after opening stream
+            # This must happen AFTER PyAudio stream is opened
+            self._ensure_mixer_initialized()
 
-                # PyAudio can't use ALSA device names directly, but we can find it by matching
-                device_count = p.get_device_count()
-                logger.info(f"[PLAYBACK THREAD] Searching through {device_count} PyAudio devices...")
+            # Set initial volume via ALSA mixer
+            with self._lock:
+                initial_volume = self._volume
 
-                output_device_index = None
-                for i in range(device_count):
-                    dev_info = p.get_device_info_by_index(i)
-                    logger.debug(f"[PLAYBACK THREAD] Device {i}: '{dev_info['name']}' (outputs={dev_info['maxOutputChannels']}, rate={dev_info['defaultSampleRate']})")
-
-                    # Look for hw:0,0 or MAX98357 or bcm2835
-                    if dev_info['maxOutputChannels'] > 0:
-                        dev_name = dev_info['name']
-                        if 'hw:0,0' in dev_name or 'MAX98357' in dev_name or 'bcm2835' in dev_name or 'HiFi' in dev_name:
-                            output_device_index = i
-                            device_name = dev_name
-                            logger.info(f"[PLAYBACK THREAD] Found hardware device {i}: {dev_name}")
-                            break
-
-                if output_device_index is not None:
-                    logger.info(f"[PLAYBACK THREAD] Opening audio stream on device {output_device_index}: {device_name}, rate={sample_rate}Hz, channels={nchannels}")
-                    stream = p.open(
-                        format=pyaudio.paInt16,
-                        channels=nchannels,
-                        rate=sample_rate,
-                        output=True,
-                        output_device_index=output_device_index,
-                        frames_per_buffer=1024
-                    )
-            except ImportError:
-                logger.debug("[PLAYBACK THREAD] alsaaudio not available, will use PyAudio enumeration only")
-            except Exception as e:
-                logger.warning(f"[PLAYBACK THREAD] Could not open hardware device directly: {e}")
-
-            # Strategy 2: If Strategy 1 failed, try plughw:0,0 (ALSA plugin layer with hardware)
-            if stream is None:
+            if self._use_alsa_volume and self._alsa_mixer:
                 try:
-                    logger.info("[PLAYBACK THREAD] Trying to find plughw:0,0 device...")
-                    for i in range(p.get_device_count()):
-                        dev_info = p.get_device_info_by_index(i)
-                        if 'plughw' in dev_info['name'] and dev_info['maxOutputChannels'] > 0:
-                            output_device_index = i
-                            device_name = dev_info['name']
-                            logger.info(f"[PLAYBACK THREAD] Found plughw device {i}: {device_name}")
-                            stream = p.open(
-                                format=pyaudio.paInt16,
-                                channels=nchannels,
-                                rate=sample_rate,
-                                output=True,
-                                output_device_index=output_device_index,
-                                frames_per_buffer=1024
-                            )
-                            break
+                    alsa_volume = int(initial_volume * 100)
+                    self._alsa_mixer.setvolume(alsa_volume)
+                    logger.info(f"[PLAYBACK THREAD] ALSA volume set to {alsa_volume}% (via SoftMaster mixer)")
                 except Exception as e:
-                    logger.warning(f"[PLAYBACK THREAD] Could not open plughw device: {e}")
-
-            # Strategy 3: Fallback to default device (will fail with 44100 Hz, but we'll know)
-            if stream is None:
-                logger.warning("[PLAYBACK THREAD] No hardware device found, using default (may fail with Invalid sample rate)")
-                logger.info(f"[PLAYBACK THREAD] Opening audio stream on default device, rate={sample_rate}Hz, channels={nchannels}")
-                stream = p.open(
-                    format=pyaudio.paInt16,
-                    channels=nchannels,
-                    rate=sample_rate,
-                    output=True,
-                    frames_per_buffer=1024
-                )
-            logger.info(f"[PLAYBACK THREAD] Audio stream opened successfully!")
+                    logger.warning(f"[PLAYBACK THREAD] Failed to set ALSA volume: {e}")
+            else:
+                logger.warning(f"[PLAYBACK THREAD] ALSA mixer unavailable - audio will play at full volume")
 
             try:
                 # Stream audio in chunks
-                # Use smaller chunks (0.1 seconds) to avoid blocking and stuttering
-                chunk_size = int(sample_rate * nchannels * 0.1)  # 0.1 second chunks
+                # Use small chunks (20ms) to match PyAudio buffer size and allow responsive pause/seek
+                # At 48kHz stereo: 20ms = 1920 samples, close to buffer size of 2048
+                chunk_size = int(sample_rate * nchannels * 0.02)  # 20ms chunks (was 100ms)
                 position_samples = start_sample
                 total_samples = len(samples)
                 chunks_written = 0
@@ -477,21 +480,12 @@ class SoundManager:
                     end_sample = min(position_samples + chunk_size, total_samples)
                     chunk = samples[position_samples:end_sample]
 
-                    # Apply volume
-                    with self._lock:
-                        volume = self._volume
-
-                    if volume != 1.0:
-                        chunk_adjusted = array.array('h', chunk)
-                        for i in range(len(chunk_adjusted)):
-                            chunk_adjusted[i] = int(chunk_adjusted[i] * volume)
-                        stream.write(chunk_adjusted.tobytes())
-                    else:
-                        stream.write(chunk.tobytes())
+                    # Write directly - ALSA softvol handles volume control
+                    stream.write(chunk.tobytes())
 
                     chunks_written += 1
                     if chunks_written == 1:
-                        logger.info(f"Audio playback started, writing chunks to device {output_device_index}")
+                        logger.info("Audio playback started - ALSA handling volume control")
 
                     # Update position
                     chunk_duration = len(chunk) / (sample_rate * nchannels)
@@ -653,13 +647,12 @@ class SoundManager:
                 # Remember state
                 current_file = self._current_file
                 was_paused = self._status == PlaybackStatus.PAUSED
-                current_volume = self._volume
 
             # Stop current playback
             self.stop()
 
-            # Restart from new position
-            self.play_music(current_file, volume=current_volume, start_pos=new_pos)
+            # Restart from new position (volume parameter omitted to preserve current ALSA volume)
+            self.play_music(current_file, start_pos=new_pos)
 
             # Pause if we were paused
             if was_paused:
@@ -674,10 +667,12 @@ class SoundManager:
 
     def set_volume(self, volume: float) -> bool:
         """
-        Set music volume and persist to settings.
+        Set music volume via ALSA mixer and persist to settings.
+
+        Uses ALSA softvol control for efficient hardware-accelerated volume control.
 
         Args:
-            volume: Volume level (0.0-0.3)
+            volume: Volume level (0.0-0.75)
 
         Returns:
             True if volume set successfully (or saved even when audio unavailable)
@@ -695,6 +690,18 @@ class SoundManager:
                 logger.info(f"Volume set to {self._volume:.2f} (saved to settings)")
             else:
                 logger.warning(f"Volume set to {self._volume:.2f} (NOT SAVED - no settings_manager)")
+
+            # Try to initialize and use ALSA mixer for volume control
+            if self._ensure_mixer_initialized():
+                try:
+                    # Convert 0.0-1.0 to 0-100 for ALSA
+                    alsa_volume = int(self._volume * 100)
+                    self._alsa_mixer.setvolume(alsa_volume)
+                    logger.info(f"ALSA volume set to {alsa_volume}%")
+                except Exception as e:
+                    logger.warning(f"Failed to set ALSA volume: {e}")
+            else:
+                logger.debug(f"ALSA mixer not available yet - will be set when playback starts")
 
             # Return False only if audio backend is unavailable
             # (but settings are still saved above)

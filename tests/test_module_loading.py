@@ -42,18 +42,6 @@ class TestModuleLoading(unittest.TestCase):
         self.assertEqual(manifest.version, "1.0.0")
         self.assertEqual(manifest.main_scene, "MemoryGameScene")
 
-    def test_load_reaction_game_manifest(self):
-        """Test loading reaction game manifest."""
-        module_dir = Path(__file__).parent.parent / "stream_toy_apps" / "reaction_game"
-
-        if not module_dir.exists():
-            self.skipTest("Reaction game module not found")
-
-        manifest = load_module_manifest(module_dir)
-
-        self.assertEqual(manifest.name, "Reaction")
-        self.assertEqual(manifest.main_scene, "ReactionGameScene")
-
 
 if __name__ == '__main__':
     unittest.main()

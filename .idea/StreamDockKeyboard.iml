@@ -13,10 +13,22 @@
       <excludeFolder url="file://$MODULE_DIR$/.claude-profile" />
       <excludeFolder url="file://$MODULE_DIR$/data/cache" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.12 virtualenv at /workspace/.venv-emulator" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Remote Python 3.11.2 (sftp://sebastian@rpi-keyboard:22/home/sebastian/StreamDockKeyboard/.venv/bin/python)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PackageRequirementsSettings">
     <option name="requirementsPath" value="C:\Projects\python\StreamDockKeyboard\requirements.txt" />
+  </component>
+  <component name="PyDocumentationSettings">
+    <option name="format" value="PLAIN" />
+    <option name="myDocStringFormat" value="Plain" />
+  </component>
+  <component name="TemplatesService">
+    <option name="TEMPLATE_CONFIGURATION" value="Jinja2" />
+    <option name="TEMPLATE_FOLDERS">
+      <list>
+        <option value="$MODULE_DIR$/stream_toy/web/templates" />
+      </list>
+    </option>
   </component>
 </module>

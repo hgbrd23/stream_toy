@@ -128,7 +128,7 @@ class AudioPlayerScene(BaseScene):
         # Clear all tiles first
         for row in range(self.LIST_ROWS):
             for col in range(5):  # All columns
-                self.set_tile_text(row, col, "", font_size=12)
+                self.set_tile_text(row, col, "", font_size=13)
 
         # Display items (columns 0-3)
         visible_items = self.items[self.scroll_offset:self.scroll_offset + self.ITEMS_PER_PAGE]
@@ -144,7 +144,7 @@ class AudioPlayerScene(BaseScene):
             if item.is_folder:
                 # Folder: show name with folder icon (Font Awesome folder from Nerd Font)
                 text = f"\uf07b\n{name_stem}"
-                self.set_tile_text(row, col, text, font_size=10, wrap=True)
+                self.set_tile_text(row, col, text, font_size=11, wrap=True)
             else:
                 # Audio file: check for cover art
                 audio_path = item.path
@@ -162,30 +162,30 @@ class AudioPlayerScene(BaseScene):
 
                 # Use cover art if available, otherwise text only
                 if cover_art:
-                    self.set_tile_image_with_text(row, col, str(cover_art), text, font_size=10, wrap=True)
+                    self.set_tile_image_with_text(row, col, str(cover_art), text, font_size=11, wrap=True)
                 else:
-                    self.set_tile_text(row, col, text, font_size=10, wrap=True)
+                    self.set_tile_text(row, col, text, font_size=11, wrap=True)
 
         # Navigation buttons (column 4) - smaller font for nav
         # Up button
         if self.scroll_offset > 0:
-            self.set_tile_text(self.BTN_UP, self.NAV_COL, "▲\nUp", font_size=16)
+            self.set_tile_text(self.BTN_UP, self.NAV_COL, "▲\nUp", font_size=17)
         else:
-            self.set_tile_text(self.BTN_UP, self.NAV_COL, "", font_size=12)
+            self.set_tile_text(self.BTN_UP, self.NAV_COL, "", font_size=13)
 
         # Down button
         if self.scroll_offset + self.ITEMS_PER_PAGE < len(self.items):
-            self.set_tile_text(self.BTN_DOWN, self.NAV_COL, "▼\nDown", font_size=16)
+            self.set_tile_text(self.BTN_DOWN, self.NAV_COL, "▼\nDown", font_size=17)
         else:
-            self.set_tile_text(self.BTN_DOWN, self.NAV_COL, "", font_size=12)
+            self.set_tile_text(self.BTN_DOWN, self.NAV_COL, "", font_size=13)
 
         # Back/Exit button (bottom right)
         if self.current_dir != self.data_root:
             # In a folder - show Back button
-            self.set_tile_text(self.BTN_BACK_EXIT, self.NAV_COL, "←\nBack", font_size=16)
+            self.set_tile_text(self.BTN_BACK_EXIT, self.NAV_COL, "←\nBack", font_size=17)
         else:
             # At root - show Exit button
-            self.set_tile_text(self.BTN_BACK_EXIT, self.NAV_COL, "✕\nExit", font_size=16)
+            self.set_tile_text(self.BTN_BACK_EXIT, self.NAV_COL, "✕\nExit", font_size=17)
 
         # Submit all changes
         self.submit_tiles()
@@ -311,7 +311,7 @@ class AudioPlayerScene(BaseScene):
         if not sound_mgr or not sound_mgr.is_available():
             logger.warning("Sound manager not available")
             # Show error message
-            self.set_tile_text(1, 1, "Audio\nNot\nAvail", font_size=14)
+            self.set_tile_text(1, 1, "Audio\nNot\nAvail", font_size=15)
             self.submit_tiles()
             await asyncio.sleep(2)
             await self.update_display()

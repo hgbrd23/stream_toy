@@ -189,25 +189,39 @@ configure_alsa() {
         cp "$ASOUND_CONF" "${ASOUND_CONF}.backup"
     fi
 
-    # Check if our config is already present
-    if grep -q "pcm.dmixer" "$ASOUND_CONF" 2>/dev/null; then
-        log_success "ALSA configuration already present"
-    else
-        log_info "Writing ALSA configuration to $ASOUND_CONF"
-        cat > "$ASOUND_CONF" <<'EOF'
-# Default device uses plug for automatic conversion
+    # Always regenerate ALSA configuration
+    log_info "Writing ALSA configuration to $ASOUND_CONF"
+    cat > "$ASOUND_CONF" <<'EOF'
+# Default device uses plug for automatic conversion with software volume control
 pcm.!default {
   type plug
-  slave.pcm "dmixer"
+  slave.pcm "softvol_dmixer"
 }
 
-# Dmix configuration
+# Software volume control (MAX98357A has no hardware volume)
+pcm.softvol_dmixer {
+  type softvol
+  slave.pcm "dmixer"
+  control {
+    name "SoftMaster"
+    card 0
+  }
+  min_dB -51.0
+  max_dB 0.0
+}
+
+# Dmix configuration with larger buffers for Raspberry Pi Zero 2 W
+# Prevents buffer underruns and audio stuttering
 pcm.dmixer {
   type dmix
   ipc_key 1024
+  ipc_key_add_uid yes
+  ipc_perm 0666
   slave {
       pcm "hw:0,0"
       rate 48000
+      period_size 2048     # 42.7ms periods (was 1024/21.3ms)
+      buffer_size 16384    # 341ms total buffer (was 4096/85ms)
   }
 }
 
@@ -217,8 +231,7 @@ ctl.!default {
   card 0
 }
 EOF
-        log_success "ALSA configuration written"
-    fi
+    log_success "ALSA configuration written"
 }
 
 # Install system packages
@@ -248,6 +261,7 @@ install_system_packages() {
         mpg123 \
         portaudio19-dev \
         python3-pyaudio \
+        libasound2-dev \
         ffmpeg \
         git \
         > /dev/null 2>&1
