@@ -17,3 +17,9 @@ Thumbs.db
 /.claude-profile/
 /data/cache/
 /data/audio_player/**/*
+
+# Devcontainer persistent home (caches, tool state, credentials)
+/.devcontainer/.home/
+
+# Generated display test patterns (regenerate with testimage.py)
+/assets/fullscreen/test*.png

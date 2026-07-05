@@ -1,0 +1,33 @@
+image: docker:git
+
+stages:
+- build
+- release
+
+variables:
+  TEST_IMAGE: $CI_REGISTRY/$CI_PROJECT_PATH:${CI_COMMIT_REF_NAME}-test
+  TEST_IMAGE_COMMIT_REF: $CI_REGISTRY/$CI_PROJECT_PATH/$CI_COMMIT_REF_SLUG:$CI_COMMIT_SHA
+  RELEASE_IMAGE: $CI_REGISTRY/$CI_PROJECT_PATH:$CI_COMMIT_REF_NAME
+  DOCKER_DRIVER: overlay2
+
+
+build:
+  stage: build
+  script:
+  - docker build --build-arg CI_JOB_TOKEN=${CI_JOB_TOKEN} --pull -t $TEST_IMAGE .
+  - docker push $TEST_IMAGE
+  - echo "Pushed ${TEST_IMAGE}"
+  - docker tag $TEST_IMAGE $TEST_IMAGE_COMMIT_REF
+  - docker push $TEST_IMAGE_COMMIT_REF
+  - echo "Pushed ${TEST_IMAGE_COMMIT_REF}"
+
+release:
+  stage: release
+  script:
+  - docker pull $TEST_IMAGE
+  - docker tag $TEST_IMAGE $RELEASE_IMAGE
+  - docker push $RELEASE_IMAGE
+  when: manual
+
+before_script:
+- docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY

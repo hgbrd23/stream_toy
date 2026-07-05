@@ -1,0 +1,26 @@
+services:
+  claude:
+    build: .
+    ports:
+      - "2222:22"
+    environment:
+      # SSH Configuration
+      - SSH_PUBLIC_KEY=ssh-rsa AAAA... your-key-here
+      #- SSH_ADDITIONAL_KEYS=
+      - SSH_PORT=22
+      - SSH_PASSWORD_AUTH=false
+
+      # Claude Code Configuration
+      - SETUP_CLAUDE_CODE=true
+      - USE_TMUX=true
+      - TMUX_LOG_TO_STDOUT=true
+    volumes:
+      - ./workspace:/workspace
+      - ./prompt.txt:/scripts/prompt.txt:ro
+      # Docker-in-Docker: mount host Docker socket into container
+      # Docker Desktop for Windows exposes the engine via named pipe
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: Mount SSH keys from host
+      # - ~/.ssh/id_rsa.pub:/tmp/ssh_key.pub:ro
+    command: /scripts/prompt-agent.sh
+    restart: unless-stopped
