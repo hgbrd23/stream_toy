@@ -17,23 +17,34 @@ from stream_toy.settings_manager import SettingsManager
 
 logger = logging.getLogger(__name__)
 
+# Icon paths
+ICONS_DIR = Path(__file__).parent.parent.parent / "assets" / "tiles"
+ICON_SEEK_BACK_5MIN = str(ICONS_DIR / "audio-seek-back-5min.png")
+ICON_SEEK_BACK_1MIN = str(ICONS_DIR / "audio-seek-back-1min.png")
+ICON_SEEK_START = str(ICONS_DIR / "audio-seek-start.png")
+ICON_SEEK_FWD_1MIN = str(ICONS_DIR / "audio-seek-forward-1min.png")
+ICON_SEEK_FWD_5MIN = str(ICONS_DIR / "audio-seek-forward-5min.png")
+ICON_VOLUME_DOWN = str(ICONS_DIR / "volume-down.png")
+ICON_VOLUME_UP = str(ICONS_DIR / "volume-up.png")
+ICON_BACK = str(ICONS_DIR / "back.png")
+
 
 class PlayerScene(BaseScene):
     """
     Audio playback control scene.
 
     Layout:
-    Row 0: [<<10min] [<<1min] [<<10s] [>>10s] [>>1min]
-    Row 1: [Vol-]   [Pause ] [Vol+] [      ] [      ]
-    Row 2: [Time Display................] [Back  ]
+    Row 0: [-5min] [-1min] [Start] [+1min] [+5min]
+    Row 1: [Vol-]  [Pause] [Vol+]  [Cover] [     ]
+    Row 2: [Time Display..................] [Back]
     """
 
     # Button positions
-    BTN_SKIP_BACK_10MIN = (0, 0)
+    BTN_SKIP_BACK_5MIN = (0, 0)
     BTN_SKIP_BACK_1MIN = (0, 1)
-    BTN_SKIP_BACK_10S = (0, 2)
-    BTN_SKIP_FWD_10S = (0, 3)
-    BTN_SKIP_FWD_1MIN = (0, 4)
+    BTN_SEEK_START = (0, 2)
+    BTN_SKIP_FWD_1MIN = (0, 3)
+    BTN_SKIP_FWD_5MIN = (0, 4)
 
     BTN_VOL_DOWN = (1, 0)
     BTN_PAUSE = (1, 1)
@@ -98,12 +109,14 @@ class PlayerScene(BaseScene):
         # Update last play time in metadata
         self.metadata.set_last_play_time()
 
-        # Resume from saved position if available
+        # Resume from saved position if available (only if >= 10 minutes in)
         saved_position = self.metadata.get_playback_position()
         start_pos = 0.0
-        if saved_position is not None and saved_position > 0:
+        if saved_position is not None and saved_position >= 600:
             start_pos = saved_position
             logger.info(f"Resuming playback from saved position: {saved_position:.1f}s")
+        elif saved_position is not None and saved_position > 0:
+            logger.info(f"Saved position {saved_position:.1f}s is less than 10 min, starting from beginning")
 
         # Start playback (with resume position if available)
         sound_mgr.play_music(self.audio_file, volume=self.current_volume, start_pos=start_pos)
@@ -133,8 +146,8 @@ class PlayerScene(BaseScene):
             duration = sound_mgr.get_duration()
             status = sound_mgr.get_status()
 
-            # Save unless we're at the very end (finished playback)
-            if position > 0 and not (duration > 0 and position >= duration - 1.0):
+            # Save unless we're at the very end (finished playback) or less than 10 min in
+            if position >= 600 and not (duration > 0 and position >= duration - 1.0):
                 self.metadata.set_playback_position(position)
                 logger.info(f"Saved playback position on exit: {position:.1f}s (status: {status})")
 
@@ -144,17 +157,17 @@ class PlayerScene(BaseScene):
 
     async def render_ui(self):
         """Render all player controls."""
-        # Row 0: Skip controls
-        self.set_tile_text(0, 0, "<<\n10min", font_size=13)
-        self.set_tile_text(0, 1, "<<\n1min", font_size=13)
-        self.set_tile_text(0, 2, "<<\n10s", font_size=15)
-        self.set_tile_text(0, 3, ">>\n10s", font_size=15)
-        self.set_tile_text(0, 4, ">>\n1min", font_size=13)
+        # Row 0: Skip controls using icon images
+        self.set_tile_file(0, 0, ICON_SEEK_BACK_5MIN)
+        self.set_tile_file(0, 1, ICON_SEEK_BACK_1MIN)
+        self.set_tile_file(0, 2, ICON_SEEK_START)
+        self.set_tile_file(0, 3, ICON_SEEK_FWD_1MIN)
+        self.set_tile_file(0, 4, ICON_SEEK_FWD_5MIN)
 
         # Row 1: Volume, pause, and cover art
-        self.set_tile_text(1, 0, "Vol\n-", font_size=17)
+        self.set_tile_file(1, 0, ICON_VOLUME_DOWN)
         await self._update_pause_button()
-        self.set_tile_text(1, 2, "Vol\n+", font_size=17)
+        self.set_tile_file(1, 2, ICON_VOLUME_UP)
 
         # Show cover art if available, otherwise empty
         if self.cover_art:
@@ -166,7 +179,7 @@ class PlayerScene(BaseScene):
 
         # Row 2: Time display and back button
         await self._update_time_display()
-        self.set_tile_text(2, 4, "←\nBack", font_size=17)
+        self.set_tile_file(2, 4, ICON_BACK)
 
         self.submit_tiles()
 
@@ -294,13 +307,14 @@ class PlayerScene(BaseScene):
                     last_position = position
                     last_status = status
 
-                # Save playback position every 30 seconds (only if playing)
+                # Save playback position every 30 seconds (only if playing and >= 10 min in)
                 current_time = time.time()
                 if status == PlaybackStatus.PLAYING:
                     if current_time - self._last_position_save >= 30:
-                        self.metadata.set_playback_position(position)
+                        if position >= 600:
+                            self.metadata.set_playback_position(position)
+                            logger.debug(f"Saved playback position: {position:.1f}s")
                         self._last_position_save = current_time
-                        logger.debug(f"Saved playback position: {position:.1f}s")
 
                 await asyncio.sleep(1.0)  # Check once per second (time only changes every second)
             except asyncio.CancelledError:
@@ -344,16 +358,16 @@ class PlayerScene(BaseScene):
         button = (row, col)
 
         # Skip controls (Row 0)
-        if button == self.BTN_SKIP_BACK_10MIN:
-            sound_mgr.seek(-600)  # -10 minutes
+        if button == self.BTN_SKIP_BACK_5MIN:
+            sound_mgr.seek(-300)  # -5 minutes
         elif button == self.BTN_SKIP_BACK_1MIN:
             sound_mgr.seek(-60)  # -1 minute
-        elif button == self.BTN_SKIP_BACK_10S:
-            sound_mgr.seek(-10)  # -10 seconds
-        elif button == self.BTN_SKIP_FWD_10S:
-            sound_mgr.seek(10)  # +10 seconds
+        elif button == self.BTN_SEEK_START:
+            sound_mgr.seek(-sound_mgr.get_position())  # Go to start
         elif button == self.BTN_SKIP_FWD_1MIN:
             sound_mgr.seek(60)  # +1 minute
+        elif button == self.BTN_SKIP_FWD_5MIN:
+            sound_mgr.seek(300)  # +5 minutes
 
         # Volume and pause (Row 1)
         elif button == self.BTN_VOL_DOWN:
@@ -398,8 +412,11 @@ class PlayerScene(BaseScene):
             status = sound_mgr.get_status()
             if status in (PlaybackStatus.PLAYING, PlaybackStatus.PAUSED):
                 position = sound_mgr.get_position()
-                self.metadata.set_playback_position(position)
-                logger.info(f"Saved playback position before going back: {position:.1f}s")
+                if position >= 600:
+                    self.metadata.set_playback_position(position)
+                    logger.info(f"Saved playback position before going back: {position:.1f}s")
+                else:
+                    logger.info(f"Position {position:.1f}s is less than 10 min, not saving")
 
             # Now stop playback
             sound_mgr.stop()

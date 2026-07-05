@@ -12,6 +12,15 @@ from stream_toy.sound_manager import PlaybackStatus
 
 logger = logging.getLogger(__name__)
 
+# Icon paths
+ICONS_DIR = Path(__file__).parent.parent.parent / "assets" / "tiles"
+ICON_FOLDER = str(ICONS_DIR / "folder.png")
+ICON_FOLDER_UP = str(ICONS_DIR / "folder-up.png")
+ICON_SOUND_FILE = str(ICONS_DIR / "sound-file.png")
+ICON_ARROW_UP = str(ICONS_DIR / "arrow-up.png")
+ICON_ARROW_DOWN = str(ICONS_DIR / "arrow-down.png")
+ICON_BACK = str(ICONS_DIR / "back.png")
+
 
 class FileItem:
     """Represents a file or folder in the browser."""
@@ -142,50 +151,37 @@ class AudioPlayerScene(BaseScene):
 
             # Determine display text and color
             if item.is_folder:
-                # Folder: show name with folder icon (Font Awesome folder from Nerd Font)
-                text = f"\uf07b\n{name_stem}"
-                self.set_tile_text(row, col, text, font_size=11, wrap=True)
+                # Folder: show folder icon with name
+                self.set_tile_image_with_text(row, col, ICON_FOLDER, name_stem, font_size=11, wrap=True)
             else:
                 # Audio file: check for cover art
                 audio_path = item.path
                 cover_art = self.find_cover_art(audio_path)
 
-                # Determine text
-                text = f"♪\n{name_stem}"
+                # Use cover art if available, otherwise sound file icon
+                background_icon = str(cover_art) if cover_art else ICON_SOUND_FILE
+                self.set_tile_image_with_text(row, col, background_icon, name_stem, font_size=11, wrap=True)
 
-                # Highlight if currently playing
-                button_idx = self.scroll_offset + idx
-                if button_idx == self.playing_button:
-                    sound_mgr = self.runtime.device.sound_manager
-                    if sound_mgr and sound_mgr.get_status() == PlaybackStatus.PLAYING:
-                        text = f"▶\n{name_stem}"
-
-                # Use cover art if available, otherwise text only
-                if cover_art:
-                    self.set_tile_image_with_text(row, col, str(cover_art), text, font_size=11, wrap=True)
-                else:
-                    self.set_tile_text(row, col, text, font_size=11, wrap=True)
-
-        # Navigation buttons (column 4) - smaller font for nav
+        # Navigation buttons (column 4) - use icon images
         # Up button
         if self.scroll_offset > 0:
-            self.set_tile_text(self.BTN_UP, self.NAV_COL, "▲\nUp", font_size=17)
+            self.set_tile_file(self.BTN_UP, self.NAV_COL, ICON_ARROW_UP)
         else:
             self.set_tile_text(self.BTN_UP, self.NAV_COL, "", font_size=13)
 
         # Down button
         if self.scroll_offset + self.ITEMS_PER_PAGE < len(self.items):
-            self.set_tile_text(self.BTN_DOWN, self.NAV_COL, "▼\nDown", font_size=17)
+            self.set_tile_file(self.BTN_DOWN, self.NAV_COL, ICON_ARROW_DOWN)
         else:
             self.set_tile_text(self.BTN_DOWN, self.NAV_COL, "", font_size=13)
 
         # Back/Exit button (bottom right)
         if self.current_dir != self.data_root:
-            # In a folder - show Back button
-            self.set_tile_text(self.BTN_BACK_EXIT, self.NAV_COL, "←\nBack", font_size=17)
+            # In a folder - show folder-up icon (back to parent)
+            self.set_tile_file(self.BTN_BACK_EXIT, self.NAV_COL, ICON_FOLDER_UP)
         else:
-            # At root - show Exit button
-            self.set_tile_text(self.BTN_BACK_EXIT, self.NAV_COL, "✕\nExit", font_size=17)
+            # At root - show back/exit icon
+            self.set_tile_file(self.BTN_BACK_EXIT, self.NAV_COL, ICON_BACK)
 
         # Submit all changes
         self.submit_tiles()

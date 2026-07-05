@@ -16,6 +16,11 @@ from stream_toy.scene.module_launch_scene import ModuleLaunchScene
 
 logger = logging.getLogger(__name__)
 
+# Icon paths
+ICONS_DIR = Path(__file__).parent.parent.parent / "assets" / "tiles"
+ICON_CARD_BACK = str(ICONS_DIR / "card-back.png")
+ICON_BACK = str(ICONS_DIR / "back.png")
+
 
 class MemoryGameScene(BaseScene):
     """Memory card matching game."""
@@ -115,13 +120,13 @@ class MemoryGameScene(BaseScene):
             self._render_card_back(row, col)
 
         # Exit button
-        self.set_tile_text(2, 4, "←", font_size=48, fg_color="yellow")
+        self.set_tile_file(2, 4, ICON_BACK)
 
         self.submit_tiles()
 
     def _render_card_back(self, row: int, col: int) -> None:
         """Show card back."""
-        self.set_tile_text(row, col, "?", font_size=64, fg_color="cyan", bg_color="darkblue")
+        self.set_tile_file(row, col, ICON_CARD_BACK)
 
     def _render_card_face(self, row: int, col: int, idx: int) -> None:
         """Show card face."""
@@ -149,7 +154,7 @@ class MemoryGameScene(BaseScene):
             self._render_card_back(row, col)
 
         # Exit button
-        self.set_tile_text(2, 4, "←", font_size=48, fg_color="yellow")
+        self.set_tile_file(2, 4, ICON_BACK)
         self.submit_tiles()
 
     async def main_loop(self) -> None:
@@ -346,7 +351,7 @@ class MemoryGameScene(BaseScene):
                 self.set_tile_text(row, col, "★", font_size=48, bg_color="gold")
 
         # Keep back button visible
-        self.set_tile_text(2, 4, "←", font_size=48, fg_color="yellow")
+        self.set_tile_file(2, 4, ICON_BACK)
 
         self.submit_tiles()
 

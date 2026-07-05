@@ -4,6 +4,7 @@ Module launcher scene.
 Displays all available modules and allows launching them.
 """
 
+from pathlib import Path
 from typing import List, TYPE_CHECKING
 import asyncio
 import logging
@@ -15,6 +16,10 @@ if TYPE_CHECKING:
     from ..module import StreamToyModule
 
 logger = logging.getLogger(__name__)
+
+# Icon paths
+ICONS_DIR = Path(__file__).parent.parent.parent / "assets" / "tiles"
+ICON_GEAR = str(ICONS_DIR / "gear.png")
 
 
 try:
@@ -42,8 +47,8 @@ class ModuleLaunchScene(MenuScene):
                 # Clear any previous animations
                 self.state_manager.led_manager.background_animation = None
                 self.state_manager.led_manager.foreground_animation = None
-                # Set dim white (30% brightness of full white)
-                dim_white = (77, 77, 77)
+                # Set dim white
+                dim_white = (10, 10, 10)
                 self.state_manager.led_manager.set_all(dim_white)
                 await asyncio.sleep(0.2)  # Brief pause to ensure it's set
         except Exception as e:
@@ -52,7 +57,7 @@ class ModuleLaunchScene(MenuScene):
         # Set Sparkle LED animation for main menu
         if SPARKLE_AVAILABLE and self.state_manager.led_manager:
             try:
-                sparkle = Sparkle(self.state_manager.led_manager.pixels, speed=0.5, color=WHITE, num_sparkles=1)
+                sparkle = Sparkle(self.state_manager.led_manager.pixels, speed=0.5, color=(40, 40, 40), num_sparkles=1)
                 self.device.set_background_led_animation(sparkle)
                 logger.debug("Sparkle LED animation set for main menu")
             except Exception as e:
@@ -98,7 +103,7 @@ class ModuleLaunchScene(MenuScene):
         items.append(MenuItem(
             row=2,
             col=4,
-            label="⚙",  # Settings/system
+            icon=ICON_GEAR,  # Settings/system icon
             action=ButtonAction(
                 on_tap=self.show_about,
                 on_long_press=self.shutdown_system  # Exit app (useful for development)

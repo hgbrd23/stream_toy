@@ -12,6 +12,6 @@ def get_manifest() -> ModuleManifest:
         version="1.0.0",
         author="StreamToy",
         description="Browse and play audio files from folders",
-        icon_path="assets/icon.png",
+        icon_path="../../assets/tiles/audio.png",
         main_scene="AudioPlayerScene"
     )

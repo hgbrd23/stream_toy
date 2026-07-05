@@ -12,6 +12,6 @@ def get_manifest() -> ModuleManifest:
         version="1.0.0",
         author="StreamToy Team",
         description="Classic memory matching game with animals",
-        icon_path="icon.png",
+        icon_path="../../assets/tiles/memory_icon.png",
         main_scene="MemoryGameScene"
     )

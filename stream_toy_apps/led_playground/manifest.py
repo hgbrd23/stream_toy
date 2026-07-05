@@ -12,6 +12,6 @@ def get_manifest() -> ModuleManifest:
         version="1.0.0",
         author="StreamToy Team",
         description="Interactive LED effects playground with customizable animations",
-        icon_path="icon.png",
+        icon_path="../../assets/tiles/led_playground.png",
         main_scene="LEDPlaygroundScene"
     )
