@@ -170,7 +170,7 @@ configure_boot_config() {
     # Add GPIO activity LED after [all] section
     if ! grep -A 20 "^\[all\]" "$boot_config" | grep -q "dtparam=act_led_gpio"; then
         log_info "Adding GPIO activity LED configuration"
-        sed -i '/^\[all\]/a dtparam=act_led_trigger=heartbeat' "$boot_config"
+        sed -i '/^\[all\]/a dtparam=act_led_trigger=cpu0' "$boot_config"
         sed -i '/^\[all\]/a dtparam=act_led_gpio=26' "$boot_config"
     else
         log_success "GPIO activity LED already configured"
@@ -398,7 +398,7 @@ StandardError=journal
 
 # Resource limits
 MemoryLimit=512M
-CPUQuota=80%
+CPUQuota=90%
 
 [Install]
 WantedBy=multi-user.target
