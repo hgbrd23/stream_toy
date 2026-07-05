@@ -38,7 +38,7 @@ class TestSettingsManager(unittest.TestCase):
         settings = SettingsManager(non_existent)
         volume = settings.get_volume()
 
-        self.assertEqual(volume, 0.1, "Default volume should be 0.1")
+        self.assertEqual(volume, 0.2, "Default volume should be 0.2")
 
         # Cleanup
         if temp_dir.exists():
@@ -61,19 +61,19 @@ class TestSettingsManager(unittest.TestCase):
         self.assertEqual(loaded_volume, 0.18, "Loaded volume should be 0.18")
 
     def test_volume_cap_on_startup(self):
-        """Test that volume is capped at MAX_STARTUP_VOLUME (0.2) on startup."""
-        # Create settings manager and set volume to 0.28 (above startup cap but below MAX_VOLUME)
+        """Test that volume is capped at MAX_STARTUP_VOLUME (0.3) on startup."""
+        # Create settings manager and set volume to 0.5 (above startup cap but below MAX_VOLUME)
         settings1 = SettingsManager(self.settings_path)
-        settings1.set_volume(0.28)
+        settings1.set_volume(0.5)
 
-        # Verify it was saved as 0.28
-        self.assertEqual(settings1.get_volume(), 0.28, "Volume should be saved as 0.28")
+        # Verify it was saved as 0.5
+        self.assertEqual(settings1.get_volume(), 0.5, "Volume should be saved as 0.5")
 
-        # Create new settings manager - volume should be capped at 0.2 on startup
+        # Create new settings manager - volume should be capped at 0.3 on startup
         settings2 = SettingsManager(self.settings_path)
         loaded_volume = settings2.get_volume()
 
-        self.assertEqual(loaded_volume, 0.2, "Volume should be capped at 0.2 on startup")
+        self.assertEqual(loaded_volume, 0.3, "Volume should be capped at 0.3 on startup")
 
     def test_volume_below_cap_not_affected(self):
         """Test that volume below MAX_STARTUP_VOLUME is not affected."""
@@ -117,7 +117,7 @@ class TestSettingsManager(unittest.TestCase):
         """Test resetting settings to defaults."""
         settings = SettingsManager(self.settings_path)
 
-        # Change volume to 0.25 (within MAX_VOLUME of 0.3)
+        # Change volume to 0.25 (within MAX_VOLUME of 0.75)
         settings.set_volume(0.25)
         self.assertEqual(settings.get_volume(), 0.25)
 
@@ -126,7 +126,7 @@ class TestSettingsManager(unittest.TestCase):
         self.assertTrue(result, "reset_to_defaults should return True")
 
         # Volume should be back to default
-        self.assertEqual(settings.get_volume(), 0.1, "Volume should be reset to 0.1")
+        self.assertEqual(settings.get_volume(), 0.2, "Volume should be reset to 0.2")
 
 
 if __name__ == '__main__':

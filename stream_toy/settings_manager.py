@@ -26,14 +26,14 @@ class SettingsManager:
 
     # Default settings
     DEFAULT_SETTINGS = {
-        'volume': 0.1,  # Default volume 10%
+        'volume': 0.2,  # Default volume 20%
     }
 
-    # Maximum allowed volume (safety limit for children's toy)
+    # Maximum allowed volume (safety limit for children's toy and to prevent distortion from current spikes)
     MAX_VOLUME = 0.75
 
     # Maximum allowed volume on startup (safety limit for children's toy)
-    MAX_STARTUP_VOLUME = 0.2
+    MAX_STARTUP_VOLUME = 0.3
 
     def __init__(self, settings_file: Optional[Path] = None):
         """
