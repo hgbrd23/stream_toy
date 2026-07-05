@@ -258,5 +258,6 @@ Use the venv in .venv-emulator with requirements-emulator.
 - When fixing something and your code did not fix the problem, remove it unless it provides some very clear benefits.
 - Never use hardcoded paths. Always use a path relative to our modules.
 - Don't create test scripts. Write unittests in the tests directory.
+- Do not create backup file copies when deploying to the device. Git is the safety net.
 - You are running in a container and can't access ALSA or the physical device.
 - Acknowledge every time you read CLAUDE.md and output a line so the user knows.

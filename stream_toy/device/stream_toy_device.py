@@ -61,31 +61,26 @@ class StreamToyDevice(ABC):
         """
         pass
 
-    def initialize_sound(self, sample_rate: int = 48000, settings_manager=None) -> None:
+    def initialize_sound(self, sound_manager: SoundManager) -> None:
         """
-        Initialize sound manager for this device.
+        Attach the shared sound manager to this device.
+
+        The manager is created and shut down by the runtime; devices only
+        hold a reference so scenes can reach it via runtime.device.
 
         Args:
-            sample_rate: Audio sample rate (default: 48000 Hz)
-            settings_manager: Optional SettingsManager for persistent volume
+            sound_manager: Shared SoundManager instance
         """
-        if self.sound_manager is None:
-            self.sound_manager = SoundManager(sample_rate=sample_rate, settings_manager=settings_manager)
-            if self.sound_manager.is_available():
-                logger.info("Sound manager initialized successfully")
-            else:
-                logger.warning("Sound manager unavailable (audio disabled)")
+        self.sound_manager = sound_manager
+        if sound_manager.is_available():
+            logger.info("Sound manager attached successfully")
+        else:
+            logger.warning("Sound manager unavailable (audio disabled)")
 
     @abstractmethod
     def close(self) -> None:
         """Close the device and cleanup resources."""
         pass
-
-    def close_sound(self) -> None:
-        """Close sound manager and cleanup audio resources."""
-        if self.sound_manager:
-            self.sound_manager.shutdown()
-            self.sound_manager = None
 
     def set_state_manager(self, state_manager) -> None:
         """

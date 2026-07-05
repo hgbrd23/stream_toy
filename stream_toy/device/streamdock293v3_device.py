@@ -143,7 +143,10 @@ class StreamDock293V3Device(StreamToyDevice):
             self.sdk_device.transport.open(bytes(self.sdk_device.path, 'utf-8'))
             logger.info("Device opened with custom read loop")
 
-            # Initialize device (calls wakeScreen, set_brightness, clearAllIcon, refresh)
+            # Initialize device (calls wakeScreen, set_brightness, clearAllIcon, refresh).
+            # Reading from the transport during init() crashes the SDK's native code,
+            # so the read thread must only start afterwards.
+            self._device_busy = True
             self.sdk_device.init()
             logger.info("Device initialized")
 
@@ -153,8 +156,10 @@ class StreamDock293V3Device(StreamToyDevice):
             self._read_thread.start()
             logger.info("Custom read thread started")
 
-            # Wait for initial refresh
-            time.sleep(1)
+            # Wait for the init refresh to complete; the ACK may have arrived before the
+            # read thread started (or never come), so a timeout here is not an error
+            if not self._wait_for_ack(timeout=1.0):
+                logger.debug("No ACK for initial refresh within 1s, continuing")
 
             self._initialized = True
             logger.info("StreamDock 293V3 device initialized successfully")
@@ -164,6 +169,26 @@ class StreamDock293V3Device(StreamToyDevice):
         except Exception as e:
             logger.error(f"Failed to initialize device: {e}", exc_info=True)
             raise RuntimeError(f"Device initialization failed: {e}")
+
+    def _wait_for_ack(self, timeout: float) -> bool:
+        """
+        Wait until the device ACKs the last refresh (clears the busy flag).
+
+        Args:
+            timeout: Maximum seconds to wait
+
+        Returns:
+            True if ACK received, False on timeout (busy flag is reset)
+        """
+        start_time = time.time()
+
+        while self._device_busy:
+            if time.time() - start_time > timeout:
+                self._device_busy = False
+                return False
+            time.sleep(0.01)  # 10ms poll interval
+
+        return True
 
     def _to_native_format(self, image: Image.Image) -> Image.Image:
         """
@@ -459,13 +484,9 @@ class StreamDock293V3Device(StreamToyDevice):
                 logger.info(f"Waiting for device ACK (timeout: {timeout}s)...")
                 start_time = time.time()
 
-                while self._device_busy:
-                    if time.time() - start_time > timeout:
-                        logger.error(f"Timeout waiting for device ACK after {timeout}s")
-                        self._device_busy = False
-                        return False
-
-                    time.sleep(0.01)  # 10ms poll interval
+                if not self._wait_for_ack(timeout):
+                    logger.error(f"Timeout waiting for device ACK after {timeout}s")
+                    return False
 
                 elapsed = time.time() - start_time
                 logger.info(f"Device ACK received after {elapsed:.2f}s")

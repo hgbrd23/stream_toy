@@ -65,8 +65,7 @@ class WebDevice(StreamToyDevice):
             )
             self._server_thread.start()
 
-            # Give server time to start
-            time.sleep(1)
+            self._wait_for_server(timeout=10.0)
 
             # Start LED update pusher
             self._start_led_updates()
@@ -77,6 +76,33 @@ class WebDevice(StreamToyDevice):
         except Exception as e:
             logger.error(f"Failed to initialize WebDevice: {e}", exc_info=True)
             raise RuntimeError(f"WebDevice initialization failed: {e}")
+
+    def _wait_for_server(self, timeout: float) -> None:
+        """
+        Wait until the web server accepts connections.
+
+        Args:
+            timeout: Maximum seconds to wait
+
+        Raises:
+            RuntimeError: If the server is not reachable within the timeout
+        """
+        import socket
+
+        connect_host = '127.0.0.1' if self.host == '0.0.0.0' else self.host
+        deadline = time.time() + timeout
+
+        while True:
+            try:
+                with socket.create_connection((connect_host, self.port), timeout=0.5):
+                    return
+            except OSError:
+                if time.time() > deadline:
+                    raise RuntimeError(
+                        f"Web server did not start listening on {connect_host}:{self.port} "
+                        f"within {timeout}s"
+                    )
+                time.sleep(0.05)
 
     def _start_led_updates(self) -> None:
         """Start thread to push LED updates to browser."""

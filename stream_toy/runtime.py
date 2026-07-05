@@ -9,7 +9,9 @@ import asyncio
 from pathlib import Path
 from typing import List, Optional, Type
 import logging
+import subprocess
 import sys
+import threading
 import time
 
 from .device.stream_toy_device import StreamToyDevice
@@ -21,6 +23,7 @@ from .scene.base_scene import BaseScene
 from .scene.module_launch_scene import ModuleLaunchScene
 from .settings_manager import SettingsManager
 from .display_state_manager import DisplayStateManager
+from .sound_manager import SoundManager
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,7 @@ class StreamToyRuntime:
         self.device: Optional[StreamToyDevice] = None  # Primary device (for compatibility)
         self.input_manager = InputManager()
         self.settings_manager = SettingsManager()
+        self.sound_manager: Optional[SoundManager] = None  # Shared across all devices
         self.modules: List[StreamToyModule] = []
 
         # Central display state manager
@@ -93,13 +97,13 @@ class StreamToyRuntime:
         # Set default LED animation
         self._set_default_led_animation()
 
-        # Initialize hardware device
+        # Initialize hardware device first so the splashscreen appears as early as possible
+        hw_device: Optional[StreamDock293V3Device] = None
         if self.enable_hardware:
             try:
                 logger.info("Initializing hardware device...")
                 hw_device = StreamDock293V3Device()
                 hw_device.initialize()
-                hw_device.initialize_sound(sample_rate=48000, settings_manager=self.settings_manager)
                 hw_device.register_key_callback(self.input_manager.on_device_key_event)
 
                 # Set state manager reference and register as viewer
@@ -108,78 +112,62 @@ class StreamToyRuntime:
 
                 self.devices.append(hw_device)
                 logger.info("Hardware device initialized successfully")
-
-                # Display splashscreen and wait for ACK
-                splashscreen_path = Path(__file__).parent.parent / "assets" / "tiles" / "splashscreen.png"
-                if splashscreen_path.exists():
-                    logger.info("Displaying splashscreen...")
-                    if hw_device.set_background_image(splashscreen_path, wait_for_ack=True, timeout=10.0):
-                        logger.info("Splashscreen displayed successfully")
-
-                        # Wait up to 5 seconds, but abort if any button is pressed
-                        logger.info("Waiting 5 seconds (press any button to skip)...")
-                        button_pressed = [False]  # Use list to allow modification in nested callback
-
-                        def skip_callback(row: int, col: int, is_pressed: bool):
-                            """Temporary callback to detect button press and skip wait."""
-                            if is_pressed:
-                                button_pressed[0] = True
-                                logger.info(f"Button pressed at ({row},{col}) - skipping wait")
-
-                        # Temporarily register skip callback
-                        original_callback = hw_device._key_callback
-                        hw_device.register_key_callback(skip_callback)
-
-                        # Wait up to 5 seconds, checking for button press every 100ms
-                        start_time = time.time()
-                        while time.time() - start_time < 5.0:
-                            if button_pressed[0]:
-                                elapsed = time.time() - start_time
-                                logger.info(f"Wait aborted after {elapsed:.1f}s")
-                                break
-                            time.sleep(0.1)
-                        else:
-                            logger.info("Wait completed (5s)")
-
-                        # Restore original callback
-                        hw_device.register_key_callback(original_callback)
-
-                        # Clear screen with black background
-                        logger.info("Clearing screen with black background...")
-                        black_bg_path = self._ensure_black_background()
-                        if hw_device.set_background_image(black_bg_path, wait_for_ack=True, timeout=10.0):
-                            logger.info("Screen cleared to black successfully")
-                        else:
-                            logger.warning("Failed to clear screen to black")
-                    else:
-                        logger.warning("Failed to display splashscreen")
-                else:
-                    logger.warning(f"Splashscreen not found: {splashscreen_path}")
-
             except Exception as e:
                 logger.error(f"Failed to initialize hardware device: {e}", exc_info=True)
+                hw_device = None
                 if not self.enable_web:
                     raise RuntimeError(f"Hardware initialization failed and web disabled: {e}")
 
-        # Initialize web device
-        if self.enable_web:
+        # Hardware-independent init (sound backend, web emulator, module manifests)
+        # runs in the background while the splashscreen is shown
+        background: dict = {}
+
+        def _background_init() -> None:
             try:
-                logger.info("Initializing web emulator...")
-                web_device = WebDevice(port=self.web_port)
-                web_device.initialize()
-                web_device.initialize_sound(sample_rate=48000, settings_manager=self.settings_manager)
-                web_device.register_key_callback(self.input_manager.on_device_key_event)
-
-                # Set state manager reference and register as viewer
-                web_device.set_state_manager(self.state_manager)
-                self.state_manager.register_viewer(web_device._on_state_tile_update, device=web_device)
-
-                self.devices.append(web_device)
-                logger.info(f"Web emulator initialized successfully at http://0.0.0.0:{self.web_port}")
+                background['sound'] = SoundManager(sample_rate=48000, settings_manager=self.settings_manager)
             except Exception as e:
-                logger.error(f"Failed to initialize web device: {e}", exc_info=True)
-                if not self.enable_hardware or not self.devices:
-                    raise RuntimeError(f"Web initialization failed: {e}")
+                logger.error(f"Failed to initialize sound manager: {e}", exc_info=True)
+
+            if self.enable_web:
+                try:
+                    logger.info("Initializing web emulator...")
+                    web_device = WebDevice(port=self.web_port)
+                    web_device.initialize()
+                    background['web'] = web_device
+                except Exception as e:
+                    logger.error(f"Failed to initialize web device: {e}", exc_info=True)
+                    background['web_error'] = e
+
+            self.load_modules()
+
+        background_thread = threading.Thread(target=_background_init, name="background-init", daemon=True)
+        background_thread.start()
+
+        # Show splashscreen while background init runs
+        if hw_device:
+            self._show_splashscreen(hw_device)
+
+        background_thread.join()
+
+        # Wire up shared sound manager and web device
+        self.sound_manager = background.get('sound')
+        if hw_device and self.sound_manager:
+            hw_device.initialize_sound(self.sound_manager)
+
+        web_device = background.get('web')
+        if web_device:
+            if self.sound_manager:
+                web_device.initialize_sound(self.sound_manager)
+            web_device.register_key_callback(self.input_manager.on_device_key_event)
+
+            # Set state manager reference and register as viewer
+            web_device.set_state_manager(self.state_manager)
+            self.state_manager.register_viewer(web_device._on_state_tile_update, device=web_device)
+
+            self.devices.append(web_device)
+            logger.info(f"Web emulator initialized successfully at http://0.0.0.0:{self.web_port}")
+        elif self.enable_web and not self.devices:
+            raise RuntimeError(f"Web initialization failed: {background.get('web_error')}")
 
         # Verify at least one device available
         if not self.devices:
@@ -189,10 +177,91 @@ class StreamToyRuntime:
         self.device = self.devices[0]
         logger.info(f"Primary device: {type(self.device).__name__}")
 
-        # Load all modules
-        self.load_modules()
+        # Auto-update yt-dlp in the background (non-blocking)
+        self._update_ytdlp_background()
 
         logger.info("StreamToy Runtime initialized successfully")
+
+    def _show_splashscreen(self, hw_device: StreamDock293V3Device) -> None:
+        """
+        Display the splashscreen, wait for a button press (or 120s), then clear to black.
+
+        Args:
+            hw_device: Initialized hardware device
+        """
+        splashscreen_path = Path(__file__).parent.parent / "assets" / "fullscreen" / "splashscreen.png"
+        if not splashscreen_path.exists():
+            logger.warning(f"Splashscreen not found: {splashscreen_path}")
+            return
+
+        logger.info("Displaying splashscreen...")
+        if not hw_device.set_background_image(splashscreen_path, wait_for_ack=True, timeout=10.0):
+            logger.warning("Failed to display splashscreen")
+            return
+
+        logger.info("Splashscreen displayed successfully")
+
+        # Wait up to 120 seconds, but abort if any button is pressed
+        logger.info("Waiting 120 seconds (press any button to skip)...")
+        button_pressed = [False]  # Use list to allow modification in nested callback
+
+        def skip_callback(row: int, col: int, is_pressed: bool):
+            """Temporary callback to detect button press and skip wait."""
+            if is_pressed:
+                button_pressed[0] = True
+                logger.info(f"Button pressed at ({row},{col}) - skipping wait")
+
+        # Temporarily register skip callback
+        original_callback = hw_device._key_callback
+        hw_device.register_key_callback(skip_callback)
+
+        # Wait, checking for button press every 100ms
+        start_time = time.time()
+        while time.time() - start_time < 120.0:
+            if button_pressed[0]:
+                elapsed = time.time() - start_time
+                logger.info(f"Wait aborted after {elapsed:.1f}s")
+                break
+            time.sleep(0.1)
+        else:
+            logger.info("Wait completed (120s)")
+
+        # Restore original callback
+        hw_device.register_key_callback(original_callback)
+
+        # Clear screen with black background
+        logger.info("Clearing screen with black background...")
+        black_bg_path = self._ensure_black_background()
+        if hw_device.set_background_image(black_bg_path, wait_for_ack=True, timeout=10.0):
+            logger.info("Screen cleared to black successfully")
+        else:
+            logger.warning("Failed to clear screen to black")
+
+    @staticmethod
+    def _update_ytdlp_background() -> None:
+        """Update yt-dlp in the background without delaying startup."""
+        def _do_update():
+            try:
+                venv_pip = Path(sys.executable).parent / 'pip'
+                if not venv_pip.is_file():
+                    logger.debug("pip not found in current venv, skipping yt-dlp update")
+                    return
+                # '[default]' keeps the pinned yt-dlp-ejs challenge solver in sync;
+                # a bare yt-dlp upgrade leaves it stale, which breaks YouTube extraction
+                # ("This video is not available") even when deno is installed.
+                result = subprocess.run(
+                    [str(venv_pip), 'install', '--upgrade', 'yt-dlp[default]'],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if result.returncode == 0:
+                    logger.info("yt-dlp auto-update completed successfully")
+                else:
+                    logger.warning(f"yt-dlp auto-update failed: {result.stderr.strip()}")
+            except Exception as e:
+                logger.warning(f"yt-dlp auto-update error: {e}")
+
+        thread = threading.Thread(target=_do_update, daemon=True, name="ytdlp-update")
+        thread.start()
 
     def load_modules(self) -> None:
         """Scan and load all modules from stream_toy_apps/."""
@@ -417,11 +486,18 @@ class StreamToyRuntime:
         # Stop central LED manager
         self.state_manager.stop_led_manager()
 
+        # Shut down the shared sound manager once, before closing devices
+        if self.sound_manager:
+            try:
+                self.sound_manager.shutdown()
+            except Exception as e:
+                logger.error(f"Error shutting down sound manager: {e}", exc_info=True)
+            self.sound_manager = None
+
         # Close all devices
         for device in self.devices:
             try:
                 logger.debug(f"Closing device: {type(device).__name__}")
-                device.close_sound()  # Close sound manager first
                 device.close()
             except Exception as e:
                 logger.error(f"Error closing device: {e}", exc_info=True)
