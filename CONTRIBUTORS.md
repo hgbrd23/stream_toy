@@ -10,7 +10,7 @@ By submitting a contribution to this project (via pull request, patch, or any ot
 
 ### 1. License Grant to Your Contributions
 
-You grant the project maintainer (Stefan Koch, streamtoy@sckoch.eu) and all users of StreamToy:
+You grant the project maintainer (Sebastian Koch, streamtoy@sckoch.eu) and all users of StreamToy:
 
 - A **perpetual, worldwide, non-exclusive, royalty-free, irrevocable license** to use, reproduce, modify, distribute, and create derivative works from your contributions
 - The right to sublicense these rights to others

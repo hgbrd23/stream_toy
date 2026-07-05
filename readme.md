@@ -1,8 +1,8 @@
-# StreamToy - Interactive Game Framework for StreamDock
+# MagicBox - Interactive Game Framework for StreamDock
 
 > A standalone children's toy built with Raspberry Pi Zero 2 W and StreamDock USB device
 
-StreamToy transforms a MiraBox HSV 293V3 StreamDock (15-button USB device with individual LCD displays per button) into an interactive, battery-powered children's toy. It provides a modular framework for creating games and apps with physical buttons, colorful displays, stereo audio, and LED animations.
+MagicBox transforms a MiraBox HSV 293V3 StreamDock (15-button USB device with individual LCD displays per button) into an interactive, battery-powered children's toy. It provides a modular framework for creating games and apps with physical buttons, colorful displays, stereo audio, and LED animations.
 
 ## Table of Contents
 
@@ -21,7 +21,7 @@ StreamToy transforms a MiraBox HSV 293V3 StreamDock (15-button USB device with i
 
 ## What Is This?
 
-StreamToy is a **complete hardware + software project** that creates a portable, kid-friendly game console:
+MagicBox is a **complete hardware + software project** that creates a portable, kid-friendly game console:
 
 - **Hardware**: Raspberry Pi Zero 2 W + StreamDock USB device + MAX98357A audio amps + WS2812B LEDs + 18650 battery pack
 - **Software**: Python framework with modular apps (games, audio player, LED playground)
@@ -36,7 +36,7 @@ StreamToy is a **complete hardware + software project** that creates a portable,
 - **Multiple Input Devices**: Real hardware + web browser emulator for development
 - **Persistent Settings**: Volume and playback positions saved across reboots
 - **Audio Player**: Play MP3/FLAC with resume, seek controls, cover art, and YouTube download support
-- **Interactive Games**: Memory game, reaction game, LED playground
+- **Interactive Games**: Memory game, LED playground
 - **LED Animations**: Background animations with support for adafruit-led-animation library
 - **Scene-Based Architecture**: Clean scene management with async/await patterns
 - **Production Ready**: Systemd service, auto-start, resource limits, comprehensive logging
@@ -47,7 +47,6 @@ StreamToy is a **complete hardware + software project** that creates a portable,
 |-----|-------------|
 | **Audio Player** | Play audiobooks and music with playback resume, seek controls, folder navigation, and YouTube downloads |
 | **Memory Game** | Classic memory matching game with multiple tile sets |
-| **Reaction Game** | Test your reflexes with fast-paced button pressing |
 | **LED Playground** | Experiment with different LED animation effects |
 
 ## Quick Start
@@ -66,7 +65,7 @@ sudo ./install.sh
 sudo reboot
 ```
 
-After reboot, StreamToy starts automatically! See [INSTALL.md](INSTALL.md) for details.
+After reboot, MagicBox starts automatically! See [INSTALL.md](INSTALL.md) for details.
 
 ### Development (Local Machine)
 
@@ -412,7 +411,7 @@ Contributions welcome!
 - Test on both hardware and web emulator
 - Include "I agree to the Contributor License Agreement" in your pull request
 
-For questions: streamtoy@sckoch.eu
+For questions: MagicBox@sckoch.eu
 
 ## License
 
@@ -444,7 +443,7 @@ This is a passion project designed for children's education and entertainment. K
 
 Interested in commercial use, partnerships, or licensing?
 
-**Contact**: streamtoy@sckoch.eu
+**Contact**: MagicBox@sckoch.eu
 
 Schools, non-profits, and educational institutions: please reach out for guidance on permitted uses.
 
