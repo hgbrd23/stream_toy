@@ -775,7 +775,6 @@
         // State
         let currentPath = 'data/audio_player';
         let selectedDirectory = 'data/audio_player';
-        let videoTitle = null;
         let isDownloading = false;
 
         // Elements
@@ -798,10 +797,12 @@
             clearTimeout(urlTimeout);
             const url = e.target.value.trim();
 
+            // The download button only needs a valid URL - never the title
+            updateDownloadButton();
+
             if (!url) {
                 videoTitleDiv.textContent = 'Paste a URL to see the video title';
                 videoTitleDiv.classList.remove('loaded');
-                updateDownloadButton();
                 return;
             }
 
@@ -813,7 +814,7 @@
             }, 500);
         });
 
-        // Fetch video title
+        // Fetch video title (informational only - never blocks downloading)
         async function fetchVideoTitle(url) {
             try {
                 const response = await fetch('/api/youtube/title', {
@@ -824,22 +825,21 @@
 
                 const data = await response.json();
 
+                // Ignore responses for URLs the user has since changed
+                if (urlInput.value.trim() !== url) return;
+
                 if (response.ok) {
-                    videoTitle = data.title;
-                    videoTitleDiv.textContent = videoTitle;
+                    videoTitleDiv.textContent = data.title;
                     videoTitleDiv.classList.add('loaded');
                 } else {
                     videoTitleDiv.textContent = `Error: ${data.error}`;
                     videoTitleDiv.classList.remove('loaded');
-                    videoTitle = null;
                 }
             } catch (error) {
+                if (urlInput.value.trim() !== url) return;
                 videoTitleDiv.textContent = `Error: ${error.message}`;
                 videoTitleDiv.classList.remove('loaded');
-                videoTitle = null;
             }
-
-            updateDownloadButton();
         }
 
         // New Folder Handlers
@@ -1078,13 +1078,21 @@
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
+        function isValidHttpUrl(value) {
+            try {
+                const parsed = new URL(value);
+                return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+            } catch {
+                return false;
+            }
+        }
+
         // Update download button state
         function updateDownloadButton() {
-            const hasUrl = urlInput.value.trim() !== '';
-            const hasTitle = videoTitle !== null;
+            const hasValidUrl = isValidHttpUrl(urlInput.value.trim());
             const hasDirectory = selectedDirectory !== null;
 
-            downloadBtn.disabled = !hasUrl || !hasTitle || !hasDirectory || isDownloading;
+            downloadBtn.disabled = !hasValidUrl || !hasDirectory || isDownloading;
         }
 
         // Show status message

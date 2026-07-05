@@ -10,3 +10,6 @@ PyYAML>=6.0
 
 # For downloading audio from Youtube
 yt-dlp[default]
+# JS runtime required by yt-dlp for YouTube challenge solving.
+# The real device gets a system-wide deno via install.sh instead.
+deno

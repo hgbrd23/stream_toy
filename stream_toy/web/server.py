@@ -16,6 +16,9 @@ import json
 import threading
 import sys
 import shutil
+import urllib.error
+import urllib.parse
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +169,13 @@ def youtube_downloader():
 
 @app.route('/api/youtube/title', methods=['POST'])
 def get_youtube_title():
-    """Get video title from YouTube URL."""
+    """Get video title from YouTube URL via the oEmbed API.
+
+    Deliberately avoids yt-dlp: a full extraction takes ~60s on the
+    Pi Zero 2 W, while oEmbed answers in well under a second. The title is
+    informational only - downloads must not depend on this endpoint.
+    """
+    url = ''
     try:
         data = request.get_json()
         url = data.get('url', '').strip()
@@ -174,30 +183,24 @@ def get_youtube_title():
         if not url:
             return jsonify({'error': 'URL is required'}), 400
 
-        # Use yt-dlp to get video title (much faster than --dump-json)
-        # --no-playlist ensures we only get the single video, not the entire playlist
-        ytdlp = get_ytdlp_executable()
-        result = subprocess.run(
-            [ytdlp, '--print', '%(title)s', '--no-warnings', '--no-playlist', url],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        oembed_url = 'https://www.youtube.com/oembed?' + urllib.parse.urlencode(
+            {'url': url, 'format': 'json'})
+        with urllib.request.urlopen(oembed_url, timeout=10) as response:
+            payload = json.load(response)
 
-        if result.returncode != 0:
-            error_msg = result.stderr.strip() if result.stderr else 'Failed to fetch video information'
-            logger.error(f"yt-dlp error: {error_msg}")
-            return jsonify({'error': 'Failed to fetch video information'}), 400
-
-        title = result.stdout.strip()
+        title = payload.get('title', '').strip()
         if not title:
             return jsonify({'error': 'No title found'}), 400
 
         return jsonify({'title': title})
 
-    except subprocess.TimeoutExpired:
-        logger.error(f"yt-dlp timeout for URL: {url}")
-        return jsonify({'error': 'Request timed out - YouTube may be slow or unreachable'}), 408
+    except urllib.error.HTTPError as e:
+        # 400/404: invalid or unknown video; 401/403: embedding disabled
+        logger.warning(f"oEmbed title lookup failed for {url}: HTTP {e.code}")
+        return jsonify({'error': 'Could not fetch video title'}), 400
+    except urllib.error.URLError as e:
+        logger.error(f"oEmbed title lookup unreachable for {url}: {e}")
+        return jsonify({'error': 'YouTube not reachable'}), 408
     except Exception as e:
         logger.error(f"Error fetching YouTube title: {e}")
         return jsonify({'error': str(e)}), 500
@@ -480,6 +483,9 @@ def _run_download(url: str, target_dir: Path, client_sid: str):
                 '--no-playlist',
                 '--newline',
                 '--progress',
+                # Clean title-based name without the video ID (default template
+                # is '%(title)s [%(id)s].%(ext)s'), matching tools/yt_download.py
+                '-o', '%(title)s.%(ext)s',
                 url
             ],
             cwd=str(target_dir),

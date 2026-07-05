@@ -266,6 +266,19 @@ install_system_packages() {
         git \
         > /dev/null 2>&1
 
+    # Install deno (required by yt-dlp for YouTube JS extraction)
+    if command -v deno &> /dev/null; then
+        log_success "Deno already installed"
+    else
+        log_info "Installing Deno..."
+        curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh > /dev/null 2>&1
+        if command -v deno &> /dev/null; then
+            log_success "Deno installed: $(deno --version | head -1)"
+        else
+            log_warning "Deno installation failed - yt-dlp may have limited YouTube support"
+        fi
+    fi
+
     log_success "System packages installed"
 }
 
@@ -326,6 +339,11 @@ setup_venv() {
     # Install requirements
     log_info "Installing Python dependencies (this may take several minutes)..."
     "$VENV_DIR/bin/pip" install -r "${INSTALL_DIR}/requirements.txt" > /dev/null 2>&1
+
+    # Install yt-dlp for YouTube audio downloads
+    log_info "Installing yt-dlp..."
+    "$VENV_DIR/bin/pip" install yt-dlp > /dev/null 2>&1
+    log_success "yt-dlp installed"
 
     log_success "Python environment configured"
 }
