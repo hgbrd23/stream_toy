@@ -387,7 +387,6 @@ class SoundManager:
         try:
             import miniaudio
             import pyaudio
-            import array
 
             with self._lock:
                 file_path = self._current_file
@@ -399,22 +398,26 @@ class SoundManager:
                 logger.warning("[PLAYBACK THREAD] No file_path set, exiting")
                 return
 
-            # Decode audio file completely
-            logger.info(f"[PLAYBACK THREAD] Decoding file: {file_path}")
-            decoded = miniaudio.decode_file(str(file_path))
-            logger.info(f"[PLAYBACK THREAD] Decoded: {decoded.sample_rate}Hz, {decoded.nchannels} channels")
+            # Get file info for sample rate and channels (fast operation)
+            logger.info(f"[PLAYBACK THREAD] Getting file info: {file_path}")
+            info = miniaudio.get_file_info(str(file_path))
+            sample_rate = info.sample_rate
+            nchannels = info.nchannels
+            logger.info(f"[PLAYBACK THREAD] File info: {sample_rate}Hz, {nchannels} channels, duration: {info.duration:.1f}s")
 
-            # Use native sample rate - ALSA plug will handle resampling automatically
-            sample_rate = decoded.sample_rate
-            nchannels = decoded.nchannels
-            samples = array.array('h', decoded.samples)
+            # Use streaming decoder - decodes on-the-fly, no upfront delay
+            # frames_to_read controls chunk size: 1024 frames at a time
+            logger.info(f"[PLAYBACK THREAD] Starting streaming decoder")
+            frames_per_chunk = 1024
+            stream_generator = miniaudio.stream_file(
+                str(file_path),
+                output_format=miniaudio.SampleFormat.SIGNED16,
+                nchannels=nchannels,
+                sample_rate=sample_rate,
+                frames_to_read=frames_per_chunk
+            )
 
             logger.info(f"[PLAYBACK THREAD] Using native rate {sample_rate}Hz - ALSA plug will resample to 48000Hz")
-
-            # Calculate starting position
-            start_sample = 0
-            if start_pos > 0:
-                start_sample = int(start_pos * sample_rate * nchannels)
 
             # Initialize PyAudio
             logger.info("[PLAYBACK THREAD] Initializing PyAudio...")
@@ -425,7 +428,7 @@ class SoundManager:
             # The /etc/asound.conf configures default -> plug -> softvol -> dmixer chain
             # This allows any sample rate to be automatically converted to 48000Hz
             logger.info(f"[PLAYBACK THREAD] Opening audio stream on default device (with ALSA plug resampling), rate={sample_rate}Hz, channels={nchannels}")
-            stream = p.open(
+            audio_stream = p.open(
                 format=pyaudio.paInt16,
                 channels=nchannels,
                 rate=sample_rate,
@@ -453,15 +456,14 @@ class SoundManager:
                 logger.warning(f"[PLAYBACK THREAD] ALSA mixer unavailable - audio will play at full volume")
 
             try:
-                # Stream audio in chunks
-                # Use small chunks (20ms) to match PyAudio buffer size and allow responsive pause/seek
-                # At 48kHz stereo: 20ms = 1920 samples, close to buffer size of 2048
-                chunk_size = int(sample_rate * nchannels * 0.02)  # 20ms chunks (was 100ms)
-                position_samples = start_sample
-                total_samples = len(samples)
+                # Calculate frames to skip for start position
+                frames_to_skip = int(start_pos * sample_rate) if start_pos > 0 else 0
+                frames_skipped = 0
                 chunks_written = 0
+                bytes_per_frame = nchannels * 2  # 2 bytes per sample (SIGNED16)
 
-                while position_samples < total_samples:
+                # Stream audio chunks from the generator
+                for chunk_samples in stream_generator:
                     # Check if stop requested
                     if self._stop_event.is_set():
                         break
@@ -476,28 +478,44 @@ class SoundManager:
                         if self._stop_event.is_set():
                             break
 
-                    # Get chunk of audio
-                    end_sample = min(position_samples + chunk_size, total_samples)
-                    chunk = samples[position_samples:end_sample]
+                    # stream_file yields array.array objects, calculate frames
+                    # For array of int16 samples: frames = len(samples) / nchannels
+                    frames_in_chunk = len(chunk_samples) // nchannels
 
-                    # Write directly - ALSA softvol handles volume control
-                    stream.write(chunk.tobytes())
+                    # Skip frames until we reach start position
+                    if frames_skipped < frames_to_skip:
+                        remaining_to_skip = frames_to_skip - frames_skipped
+                        if frames_in_chunk <= remaining_to_skip:
+                            # Skip entire chunk
+                            frames_skipped += frames_in_chunk
+                            continue
+                        else:
+                            # Skip partial chunk, play the rest
+                            # Skip in samples (frames * channels)
+                            skip_samples = remaining_to_skip * nchannels
+                            chunk_samples = chunk_samples[skip_samples:]
+                            frames_skipped = frames_to_skip
+                            frames_in_chunk = len(chunk_samples) // nchannels
+
+                    # Convert array to bytes for PyAudio
+                    chunk_bytes = chunk_samples.tobytes()
+
+                    # Write audio data - ALSA softvol handles volume control
+                    audio_stream.write(chunk_bytes)
 
                     chunks_written += 1
                     if chunks_written == 1:
                         logger.info("Audio playback started - ALSA handling volume control")
 
                     # Update position
-                    chunk_duration = len(chunk) / (sample_rate * nchannels)
+                    chunk_duration = frames_in_chunk / sample_rate
                     with self._lock:
                         self._position += chunk_duration
 
-                    position_samples = end_sample
-
             finally:
                 # Close PyAudio stream
-                stream.stop_stream()
-                stream.close()
+                audio_stream.stop_stream()
+                audio_stream.close()
                 p.terminate()
 
             # Playback finished
