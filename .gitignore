@@ -21,5 +21,12 @@ Thumbs.db
 # Devcontainer persistent home (caches, tool state, credentials)
 /.devcontainer/.home/
 
+# IDE files exposing machine/infrastructure details (remote SDKs, deployment targets)
+/.idea/deployment.xml
+/.idea/webServers.xml
+/.idea/misc.xml
+/.idea/sshConfigs.xml
+/.idea/*.iml
+
 # Generated display test patterns (regenerate with testimage.py)
 /assets/fullscreen/test*.png

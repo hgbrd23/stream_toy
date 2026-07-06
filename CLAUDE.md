@@ -259,5 +259,8 @@ Use the venv in .venv-emulator with requirements-emulator.
 - Never use hardcoded paths. Always use a path relative to our modules.
 - Don't create test scripts. Write unittests in the tests directory.
 - Do not create backup file copies when deploying to the device. Git is the safety net.
+- Commits end up on public GitHub. Before every commit, check the changes for sensitive data: credentials, keys,
+  tokens, internal hostnames/IPs/usernames, personal data, and IDE remote/deployment configs. Never commit such
+  data; gitignore the offending files instead.
 - You are running in a container and can't access ALSA or the physical device.
 - Acknowledge every time you read CLAUDE.md and output a line so the user knows.
