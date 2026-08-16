@@ -560,11 +560,11 @@ def _run_download(url: str, target_dir: Path, client_sid: str, download_playlist
                 '--no-quiet',
                 # Clean title-based name without the video ID (default template
                 # is '%(title)s [%(id)s].%(ext)s'), matching tools/yt_download.py.
-                # Playlist entries get a zero-padded index prefix ('03 - Title')
+                # Playlist entries get a zero-padded index prefix ('03 Title')
                 # so the audio player's alphabetical sort preserves playlist
                 # order; for single videos the prefix collapses to nothing.
                 # Relative to cwd, so playlist entries land flat in target_dir.
-                '-o', '%(playlist_index&{:02d} - |)s%(title)s.%(ext)s',
+                '-o', '%(playlist_index&{:02d} |)s%(title)s.%(ext)s',
                 url
             ],
             cwd=str(target_dir),
