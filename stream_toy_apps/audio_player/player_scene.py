@@ -15,6 +15,8 @@ from stream_toy.sound_manager import PlaybackStatus
 from stream_toy.audio_metadata_service import AudioMetadataService
 from stream_toy.settings_manager import SettingsManager
 
+from .audio_files import find_cover_art, get_next_audio_file
+
 logger = logging.getLogger(__name__)
 
 # Icon paths
@@ -53,8 +55,10 @@ class PlayerScene(BaseScene):
     BTN_TIME_DISPLAY = [(2, 0), (2, 1), (2, 2), (2, 3)]  # Multi-tile time display
     BTN_BACK = (2, 4)
 
-    # Image file extensions for cover art
-    IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp'}
+    # How close to the duration the last reported position must be for playback
+    # to count as "finished naturally". Position updates arrive every 100ms and
+    # container/decoder durations can differ slightly from the decoded length.
+    FINISH_TOLERANCE = 2.0  # seconds
 
     def __init__(self, runtime, audio_file: Path, return_dir: Optional[Path] = None):
         """
@@ -86,12 +90,20 @@ class PlayerScene(BaseScene):
         self.metadata = AudioMetadataService.get_metadata(audio_file)
         self._last_position_save = 0  # Timestamp of last position save
 
+        # Playback finish tracking.
+        # The sound manager resets its position to 0 before reporting STOPPED,
+        # so the last position seen via the position callback is what tells us
+        # whether the track ran to the end.
+        self._last_reported_position = 0.0
+        self._finished = False  # Track played to the end (shows "Replay")
+        self._auto_advance_pending = False  # Set by the callback, consumed by main_loop
+
     async def on_enter(self):
         """Initialize the scene and start playback."""
         logger.info(f"Entering Player Scene for {self.audio_file.name}")
 
         # Find cover art
-        self.cover_art = self.find_cover_art()
+        self.cover_art = find_cover_art(self.audio_file)
 
         sound_mgr = self.runtime.device.sound_manager
         if not sound_mgr or not sound_mgr.is_available():
@@ -183,27 +195,6 @@ class PlayerScene(BaseScene):
 
         self.submit_tiles()
 
-    def find_cover_art(self) -> Optional[Path]:
-        """
-        Find cover art image for the current audio file.
-
-        Looks for an image file with the same name as the audio file.
-
-        Returns:
-            Path to cover art image, or None if not found
-        """
-        # Get the stem (filename without extension)
-        stem = self.audio_file.stem
-
-        # Check for image files with same name
-        for ext in self.IMAGE_EXTENSIONS:
-            cover_path = self.audio_file.parent / f"{stem}{ext}"
-            if cover_path.exists():
-                logger.info(f"Found cover art: {cover_path}")
-                return cover_path
-
-        return None
-
     async def _update_pause_button(self):
         """Update pause/play button based on current state."""
         sound_mgr = self.runtime.device.sound_manager
@@ -215,16 +206,12 @@ class PlayerScene(BaseScene):
             self.set_tile_text(1, 1, "❚❚\nPause", font_size=15)
         elif status == PlaybackStatus.PAUSED:
             self.set_tile_text(1, 1, "▶\nPlay", font_size=17)
-        else:  # STOPPED
-            # Check if stopped at the end (finished) or just stopped
-            position = sound_mgr.get_position()
-            duration = sound_mgr.get_duration()
-            if duration > 0 and position >= duration - 1.0:
-                # Finished playing - show replay option
-                self.set_tile_text(1, 1, "↻\nReplay", font_size=15)
-            else:
-                # Stopped for other reason
-                self.set_tile_text(1, 1, "▶\nPlay", font_size=17)
+        elif self._finished:
+            # Played to the end and no next file to advance to - offer replay
+            self.set_tile_text(1, 1, "↻\nReplay", font_size=15)
+        else:
+            # Stopped for other reason
+            self.set_tile_text(1, 1, "▶\nPlay", font_size=17)
 
     async def _update_time_display(self, force_all: bool = False):
         """
@@ -323,29 +310,73 @@ class PlayerScene(BaseScene):
                 logger.error(f"Error in update loop: {e}")
                 await asyncio.sleep(0.5)
 
+    def _is_natural_finish(self) -> bool:
+        """
+        Check whether the STOPPED status we just received means the track ran out.
+
+        A manual stop (Back button, seek, replay, leaving the scene) goes through
+        SoundManager.stop(), which resets the duration to 0 before notifying. A
+        track that ends by itself keeps its duration, so a non-zero duration plus
+        a last reported position at the end identifies a natural finish.
+
+        Returns:
+            True if playback finished naturally
+        """
+        sound_mgr = self.runtime.device.sound_manager
+        if not sound_mgr:
+            return False
+
+        duration = sound_mgr.get_duration()
+        if duration <= 0:
+            return False
+
+        return self._last_reported_position >= duration - self.FINISH_TOLERANCE
+
     def on_status_change(self, status: PlaybackStatus):
-        """Handle playback status changes."""
+        """
+        Handle playback status changes.
+
+        Called by the sound manager from its playback thread, so this only
+        records state. Acting on it (switching scenes) happens in main_loop.
+        """
         logger.debug(f"Playback status changed: {status}")
 
-        # If playback stopped at the end, clear saved position
-        if status == PlaybackStatus.STOPPED:
-            sound_mgr = self.runtime.device.sound_manager
-            if sound_mgr:
-                position = sound_mgr.get_position()
-                duration = sound_mgr.get_duration()
+        if status != PlaybackStatus.STOPPED:
+            return
 
-                # If we're at the end (within 1 second), clear the position
-                if duration > 0 and position >= duration - 1.0:
-                    logger.info("Playback finished - clearing saved position")
-                    self.metadata.clear_playback_position()
+        if not self._is_natural_finish():
+            # Manual stop, seek or scene change - nothing to do
+            return
 
-        # Note: We don't auto-exit when playback finishes.
-        # User can replay or manually go back.
+        logger.info("Playback finished - clearing saved position")
+        self._finished = True
+        self.metadata.clear_playback_position()
+
+        # Request auto-advance; main_loop picks this up on the event loop
+        self._auto_advance_pending = True
 
     def on_position_update(self, position: float, duration: float):
         """Handle playback position updates."""
-        # Position is updated via _update_loop, no need to do anything here
-        pass
+        # Remember the last position: the sound manager zeroes its own position
+        # before reporting STOPPED, so this is our only end-of-track evidence.
+        self._last_reported_position = position
+
+    async def _auto_advance(self):
+        """
+        Advance to the next audio file in the folder after a natural finish.
+
+        Switches to a fresh PlayerScene so metadata, cover art, static tiles and
+        saved-position handling are set up for the new file by on_enter.
+        If the current file is the last one, we stay here and show "Replay".
+        """
+        next_file = get_next_audio_file(self.audio_file)
+
+        if next_file is None:
+            logger.info(f"{self.audio_file.name} is the last file in the folder - not advancing")
+            return
+
+        logger.info(f"Auto-advancing to next file: {next_file.name}")
+        self.switch_scene(PlayerScene, audio_file=next_file, return_dir=self.return_dir)
 
     async def on_key_press(self, row: int, col: int, long_press: bool = False):
         """Handle button press."""
@@ -383,6 +414,9 @@ class PlayerScene(BaseScene):
             elif status == PlaybackStatus.STOPPED:
                 # Restart playback from beginning
                 logger.info("Restarting playback from beginning")
+                self._finished = False
+                self._auto_advance_pending = False
+                self._last_reported_position = 0.0
                 sound_mgr.stop()  # Ensure clean state
                 sound_mgr.play_music(self.audio_file, volume=self.current_volume)
         elif button == self.BTN_VOL_UP:
@@ -429,6 +463,11 @@ class PlayerScene(BaseScene):
         logger.info("Player Scene main loop started")
 
         while self._running:
+            # Track finished on its own - move on to the next file in the folder
+            if self._auto_advance_pending:
+                self._auto_advance_pending = False
+                await self._auto_advance()
+
             # Poll for input events
             event = await self.input_manager.async_poll_event(timeout=1.0)
 

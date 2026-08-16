@@ -102,7 +102,9 @@ Example structure:
 - **Playback continues** while browsing (can browse while listening)
 - **Playback stops** when you switch to a different track
 - **Auto-stop on exit**: Audio stops automatically when exiting to launcher
-- When a track finishes, playback stops (no auto-advance)
+- **Auto-advance**: When a track finishes on its own, the player continues with the
+  next audio file in the same folder (browser order, no wrap-around). On the last
+  file of a folder the player stays open and offers "↻ Replay" instead.
 - **Long-press threshold**: 3 seconds to trigger long-press exit
 
 ## Player Screen

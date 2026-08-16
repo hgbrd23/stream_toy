@@ -98,8 +98,9 @@ See **[PLAYER.md](PLAYER.md)** for complete player screen documentation.
 **Quick reference:**
 - Skip: 10s, 1min, 10min forward/backward
 - Volume: +/- in 10% increments
-- Pause/Play: Toggle playback
+- Pause/Play: Toggle playback (shows "↻ Replay" after the last file of a folder ended)
 - Back: Return to browser (stops audio)
+- End of track: Auto-advances to the next audio file in the same folder
 
 ---
 

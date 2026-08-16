@@ -85,7 +85,18 @@ Updates automatically every 0.5 seconds while playing.
 
 ### Stopping Playback
 - Tap **Back** button → Stops audio and returns to browser
-- Track reaches the end → Automatically returns to browser
+- Track reaches the end → Auto-advance to the next file (see below)
+
+### Auto-Advance at the End of a Track
+- When a track finishes **on its own**, the player automatically opens the next
+  audio file of the same folder and starts playing it
+- "Next" means the entry after the current file in the browser listing
+  (audio files only, sorted case-insensitively by name)
+- The new file gets its own cover art, duration, filename tile and resume handling
+- If the current file is the **last one in the folder**, the player stays open and
+  the Pause button turns into **↻ Replay** — tap it to play the file again
+- Auto-advance never happens on a manual stop, on pause, while seeking, or when
+  you leave the player with **Back**
 
 ### Volume Persistence
 - Volume level is remembered within the player session
@@ -124,10 +135,14 @@ pip install miniaudio
 - Ensure audio file is not corrupted
 - Try a different audio file
 
-### Player Immediately Returns to Browser
-- Audio file finished playing
-- Check file duration is > 0
-- Verify file format is supported
+### Player Jumps to Another File
+- The previous track finished and auto-advance opened the next file in the folder
+- To stay on one file, use **Back** before it reaches the end
+
+### Auto-Advance Does Not Happen
+- The file is the last audio file in its folder (there is no wrap-around)
+- The file duration could not be determined (must be > 0)
+- Verify the next file has a supported audio extension
 
 ---
 

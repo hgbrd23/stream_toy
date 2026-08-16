@@ -10,6 +10,8 @@ import logging
 from stream_toy.scene.base_scene import BaseScene
 from stream_toy.sound_manager import PlaybackStatus
 
+from .audio_files import find_cover_art, list_directory_entries
+
 logger = logging.getLogger(__name__)
 
 # Icon paths
@@ -52,12 +54,6 @@ class AudioPlayerScene(BaseScene):
     BTN_UP = 0  # Up button row
     BTN_DOWN = 1  # Down button row
     BTN_BACK_EXIT = 2  # Back/Exit button row (Back when in folder, Exit when at root)
-
-    # Audio file extensions
-    AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac', '.ogg', '.m4a'}
-
-    # Image file extensions for cover art
-    IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp'}
 
     def __init__(self, runtime, start_dir: Optional[Path] = None):
         super().__init__(runtime)
@@ -114,20 +110,9 @@ class AudioPlayerScene(BaseScene):
         self.items = []
         self.scroll_offset = 0
 
-        # Scan directory
-        try:
-            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
-
-            for entry in entries:
-                if entry.is_dir():
-                    # Add folder
-                    self.items.append(FileItem(entry, is_folder=True))
-                elif entry.is_file() and entry.suffix.lower() in self.AUDIO_EXTENSIONS:
-                    # Add audio file
-                    self.items.append(FileItem(entry, is_folder=False))
-
-        except Exception as e:
-            logger.error(f"Error loading directory {path}: {e}")
+        # Scan directory (shared helper keeps ordering/filtering in sync with the player)
+        for entry in list_directory_entries(path):
+            self.items.append(FileItem(entry, is_folder=entry.is_dir()))
 
         # Update display
         await self.update_display()
@@ -155,8 +140,7 @@ class AudioPlayerScene(BaseScene):
                 self.set_tile_image_with_text(row, col, ICON_FOLDER, name_stem, font_size=11, wrap=True)
             else:
                 # Audio file: check for cover art
-                audio_path = item.path
-                cover_art = self.find_cover_art(audio_path)
+                cover_art = find_cover_art(item.path)
 
                 # Use cover art if available, otherwise sound file icon
                 background_icon = str(cover_art) if cover_art else ICON_SOUND_FILE
@@ -188,30 +172,6 @@ class AudioPlayerScene(BaseScene):
 
         # Log current state
         logger.debug(f"Display updated: {len(self.items)} items, offset={self.scroll_offset}")
-
-    def find_cover_art(self, audio_file: Path) -> Optional[Path]:
-        """
-        Find cover art image for an audio file.
-
-        Looks for an image file with the same name as the audio file.
-
-        Args:
-            audio_file: Path to audio file
-
-        Returns:
-            Path to cover art image, or None if not found
-        """
-        # Get the stem (filename without extension)
-        stem = audio_file.stem
-
-        # Check for image files with same name
-        for ext in self.IMAGE_EXTENSIONS:
-            cover_path = audio_file.parent / f"{stem}{ext}"
-            if cover_path.exists():
-                logger.debug(f"Found cover art: {cover_path}")
-                return cover_path
-
-        return None
 
     async def on_key_press(self, row: int, col: int, long_press: bool = False):
         """
