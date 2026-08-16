@@ -201,13 +201,51 @@ pcm.!default {
 # Software volume control (MAX98357A has no hardware volume)
 pcm.softvol_dmixer {
   type softvol
-  slave.pcm "dmixer"
+  slave.pcm "highpass"
   control {
     name "SoftMaster"
     card 0
   }
   min_dB -51.0
   max_dB 0.0
+}
+
+# High-pass filter (Butterworth 12dB/oct, 150Hz) via LADSPA
+# The 3W micro speakers cannot reproduce content below ~150Hz; removing it
+# prevents speaker excursion distortion and bass-induced supply rail sag.
+# Requires packages: libasound2-plugins (ladspa PCM type), swh-plugins (butthigh_iir)
+pcm.highpass {
+  type plug
+  slave {
+    pcm "highpass_ladspa"
+    # pcm_ladspa only supports FLOAT and cannot negotiate; pin the format here
+    format FLOAT
+    channels 2
+    rate 48000
+  }
+}
+
+pcm.highpass_ladspa {
+  type ladspa
+  slave.pcm "highpass_out"
+  path "/usr/lib/ladspa"
+  plugins [
+    {
+      label butthigh_iir
+      policy duplicate
+      input {
+        # controls: [ cutoff frequency (Hz), resonance ]
+        # Resonance 1.41 gives a flat (measured) Butterworth response with -3dB
+        # at the cutoff; lower values cause a boost of up to +4dB around cutoff.
+        controls [ 150 1.41 ]
+      }
+    }
+  ]
+}
+
+pcm.highpass_out {
+  type plug
+  slave.pcm "dmixer"
 }
 
 # Dmix configuration with larger buffers for Raspberry Pi Zero 2 W
@@ -262,6 +300,8 @@ install_system_packages() {
         portaudio19-dev \
         python3-pyaudio \
         libasound2-dev \
+        libasound2-plugins \
+        swh-plugins \
         ffmpeg \
         git \
         > /dev/null 2>&1

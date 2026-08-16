@@ -157,7 +157,9 @@ dtparam=act_led_trigger=heartbeat
 
 ### ALSA Configuration (`/etc/asound.conf`)
 
-Configures 48kHz audio with dmix for the MAX98357A amplifiers.
+Configures 48kHz audio with dmix for the MAX98357A amplifiers, software volume (softvol) and a
+150Hz Butterworth high-pass filter (LADSPA `butthigh_iir` from `swh-plugins`) that protects the small
+speakers from bass they cannot reproduce.
 
 ### Udev Rules (`/etc/udev/rules.d/99-streamdock.rules`)
 
