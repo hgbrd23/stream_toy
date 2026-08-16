@@ -108,6 +108,60 @@
             font-weight: 500;
         }
 
+        /* Playlist question (shown only for ambiguous URLs) */
+        .playlist-choice {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #2a2a2a;
+            border-radius: 6px;
+            border: 2px solid #00d9ff;
+        }
+
+        .playlist-choice.visible {
+            display: block;
+        }
+
+        .playlist-choice-question {
+            color: #00d9ff;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .playlist-choice-hint {
+            color: #888;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .playlist-choice-options {
+            display: flex;
+            gap: 10px;
+        }
+
+        .choice-btn {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #333;
+            border-radius: 6px;
+            background: #000;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .choice-btn:hover {
+            border-color: #00d9ff;
+        }
+
+        .choice-btn.selected {
+            background: rgba(0, 217, 255, 0.2);
+            border-color: #00d9ff;
+            color: #00d9ff;
+        }
+
         .breadcrumb {
             display: flex;
             align-items: center;
@@ -594,6 +648,19 @@
             .new-folder-input-group button {
                 width: 100%;
             }
+
+            .playlist-choice {
+                padding: 12px;
+            }
+
+            .playlist-choice-options {
+                flex-direction: column;
+            }
+
+            .choice-btn {
+                width: 100%;
+                min-height: 48px;
+            }
         }
 
         /* Small phones */
@@ -709,6 +776,18 @@
             .new-folder-input-group .btn-cancel:active {
                 background: #4a4a4a;
             }
+
+            .choice-btn:hover {
+                border-color: #333;
+            }
+
+            .choice-btn:active {
+                border-color: #00d9ff;
+            }
+
+            .choice-btn.selected:hover {
+                border-color: #00d9ff;
+            }
         }
     </style>
 </head>
@@ -728,6 +807,16 @@
                     <label for="youtube-url">Paste YouTube URL:</label>
                     <input type="text" id="youtube-url" placeholder="https://www.youtube.com/watch?v=...">
                     <div id="video-title" class="video-title">Paste a URL to see the video title</div>
+                </div>
+
+                <!-- Playlist question (only for URLs that contain a video AND a playlist) -->
+                <div id="playlist-choice" class="playlist-choice">
+                    <div class="playlist-choice-question">This link is part of a playlist. What do you want to download?</div>
+                    <div class="playlist-choice-hint">All files are saved directly in the selected folder.</div>
+                    <div class="playlist-choice-options">
+                        <button id="choice-single" class="choice-btn" type="button">🎵 Download current track only</button>
+                        <button id="choice-playlist" class="choice-btn" type="button">📃 Download whole playlist</button>
+                    </div>
                 </div>
             </div>
 
@@ -776,10 +865,17 @@
         let currentPath = 'data/audio_player';
         let selectedDirectory = 'data/audio_player';
         let isDownloading = false;
+        // 'video' | 'playlist' | 'ambiguous' - decided by /api/youtube/classify
+        let urlKind = 'video';
+        // Answer to the playlist question (null = not answered yet)
+        let playlistChoice = null;
 
         // Elements
         const urlInput = document.getElementById('youtube-url');
         const videoTitleDiv = document.getElementById('video-title');
+        const playlistChoiceDiv = document.getElementById('playlist-choice');
+        const choiceSingleBtn = document.getElementById('choice-single');
+        const choicePlaylistBtn = document.getElementById('choice-playlist');
         const breadcrumb = document.getElementById('breadcrumb');
         const fileList = document.getElementById('file-list');
         const downloadBtn = document.getElementById('download-btn');
@@ -797,6 +893,12 @@
             clearTimeout(urlTimeout);
             const url = e.target.value.trim();
 
+            // Every URL change invalidates the previous playlist answer
+            urlKind = 'video';
+            delete videoTitleDiv.dataset.title;
+            setPlaylistChoice(null);
+            playlistChoiceDiv.classList.remove('visible');
+
             // The download button only needs a valid URL - never the title
             updateDownloadButton();
 
@@ -810,9 +912,42 @@
             videoTitleDiv.classList.remove('loaded');
 
             urlTimeout = setTimeout(() => {
+                classifyUrl(url);
                 fetchVideoTitle(url);
             }, 500);
         });
+
+        // Ask the server what this URL points at (local, no YouTube round trip)
+        async function classifyUrl(url) {
+            try {
+                const response = await fetch('/api/youtube/classify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                // Ignore responses for URLs the user has since changed
+                if (urlInput.value.trim() !== url) return;
+
+                urlKind = response.ok ? data.kind : 'video';
+            } catch (error) {
+                if (urlInput.value.trim() !== url) return;
+                urlKind = 'video';
+            }
+
+            // Ask only when the URL means both things at once
+            if (urlKind === 'ambiguous') {
+                setPlaylistChoice(null);
+                playlistChoiceDiv.classList.add('visible');
+            } else {
+                setPlaylistChoice(urlKind === 'playlist');
+                playlistChoiceDiv.classList.remove('visible');
+            }
+
+            updateDownloadButton();
+        }
 
         // Fetch video title (informational only - never blocks downloading)
         async function fetchVideoTitle(url) {
@@ -829,18 +964,49 @@
                 if (urlInput.value.trim() !== url) return;
 
                 if (response.ok) {
-                    videoTitleDiv.textContent = data.title;
+                    videoTitleDiv.dataset.title = data.title;
                     videoTitleDiv.classList.add('loaded');
+                    updateTitleLabel();
                 } else {
+                    delete videoTitleDiv.dataset.title;
                     videoTitleDiv.textContent = `Error: ${data.error}`;
                     videoTitleDiv.classList.remove('loaded');
                 }
             } catch (error) {
                 if (urlInput.value.trim() !== url) return;
+                delete videoTitleDiv.dataset.title;
                 videoTitleDiv.textContent = `Error: ${error.message}`;
                 videoTitleDiv.classList.remove('loaded');
             }
         }
+
+        // Prefix the fetched title so the user sees what will be downloaded
+        function updateTitleLabel() {
+            const title = videoTitleDiv.dataset.title;
+            if (!title) return;
+
+            videoTitleDiv.textContent = playlistChoice === true
+                ? `📃 Whole playlist: ${title}`
+                : `🎵 ${title}`;
+        }
+
+        // Playlist question handlers
+        function setPlaylistChoice(choice) {
+            playlistChoice = choice;
+            choiceSingleBtn.classList.toggle('selected', choice === false);
+            choicePlaylistBtn.classList.toggle('selected', choice === true);
+            updateTitleLabel();
+        }
+
+        choiceSingleBtn.addEventListener('click', () => {
+            setPlaylistChoice(false);
+            updateDownloadButton();
+        });
+
+        choicePlaylistBtn.addEventListener('click', () => {
+            setPlaylistChoice(true);
+            updateDownloadButton();
+        });
 
         // New Folder Handlers
         newFolderBtn.addEventListener('click', () => {
@@ -1091,8 +1257,13 @@
         function updateDownloadButton() {
             const hasValidUrl = isValidHttpUrl(urlInput.value.trim());
             const hasDirectory = selectedDirectory !== null;
+            // Ambiguous URLs must be answered before downloading
+            const needsAnswer = urlKind === 'ambiguous' && playlistChoice === null;
 
-            downloadBtn.disabled = !hasValidUrl || !hasDirectory || isDownloading;
+            downloadBtn.disabled = !hasValidUrl || !hasDirectory || isDownloading || needsAnswer;
+            downloadBtn.textContent = playlistChoice === true
+                ? 'Start Playlist Download'
+                : 'Start Download';
         }
 
         // Show status message
@@ -1106,15 +1277,24 @@
             const url = urlInput.value.trim();
             if (!url || !selectedDirectory) return;
 
+            if (urlKind === 'ambiguous' && playlistChoice === null) {
+                playlistChoiceDiv.classList.add('visible');
+                showStatus('Please choose single track or whole playlist first', 'error');
+                return;
+            }
+
             isDownloading = true;
             updateDownloadButton();
             logContainer.innerHTML = '';
             logContainer.classList.add('visible');
-            showStatus('Starting download...', 'info');
+            showStatus(playlistChoice === true
+                ? 'Starting playlist download...'
+                : 'Starting download...', 'info');
 
             socket.emit('start_download', {
                 url: url,
-                target_dir: selectedDirectory
+                target_dir: selectedDirectory,
+                playlist: playlistChoice === true
             });
         });
 
@@ -1139,6 +1319,13 @@
 
         socket.on('download_error', (data) => {
             isDownloading = false;
+            // The server rejected the request because the playlist question
+            // was not answered - show it (e.g. after a stale classification)
+            if (data.needs_playlist_choice) {
+                urlKind = 'ambiguous';
+                setPlaylistChoice(null);
+                playlistChoiceDiv.classList.add('visible');
+            }
             updateDownloadButton();
             showStatus(`Error: ${data.error}`, 'error');
             addLogLine(`\n=== ERROR: ${data.error} ===`);

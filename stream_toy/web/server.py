@@ -9,7 +9,7 @@ from flask_socketio import SocketIO, emit
 import base64
 from io import BytesIO
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from pathlib import Path
 import subprocess
 import json
@@ -20,7 +20,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from stream_toy.youtube_url import classify_youtube_url, resolve_playlist_choice
+
 logger = logging.getLogger(__name__)
+
+# Marker prefix used with yt-dlp's --print so we can map each finished file to
+# the video it came from without polluting the log shown to the user.
+_PRINT_MARKER = 'STREAMTOY_FILE'
 
 
 def get_ytdlp_executable() -> str:
@@ -165,6 +171,27 @@ def emit_led_update(led_data: List[Tuple[int, int, int]]) -> None:
 def youtube_downloader():
     """Serve YouTube downloader page."""
     return render_template('youtube_downloader.html')
+
+
+@app.route('/api/youtube/classify', methods=['POST'])
+def classify_youtube_download():
+    """Classify a URL as a single video, a whole playlist or ambiguous.
+
+    Purely local (no network), so the downloader page can ask the playlist
+    question immediately - even when YouTube is unreachable.
+    """
+    try:
+        data = request.get_json()
+        url = (data or {}).get('url', '').strip()
+
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+
+        return jsonify({'kind': classify_youtube_url(url)})
+
+    except Exception as e:
+        logger.error(f"Error classifying YouTube URL: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/youtube/title', methods=['POST'])
@@ -427,9 +454,18 @@ def handle_download(data):
     try:
         url = data.get('url', '').strip()
         target_dir = data.get('target_dir', 'data/audio_player')
+        requested_playlist = data.get('playlist')
 
         if not url:
             emit('download_error', {'error': 'URL is required'})
+            return
+
+        # Decide single video vs. whole playlist. Ambiguous URLs (video + list)
+        # require an explicit answer from the client.
+        try:
+            download_playlist = resolve_playlist_choice(url, requested_playlist)
+        except ValueError as e:
+            emit('download_error', {'error': str(e), 'needs_playlist_choice': True})
             return
 
         # Ensure path is relative to project root (parent of stream_toy/)
@@ -452,27 +488,62 @@ def handle_download(data):
         # Start download in background thread
         thread = threading.Thread(
             target=_run_download,
-            args=(url, full_target_dir, request.sid)
+            args=(url, full_target_dir, request.sid, download_playlist)
         )
         thread.daemon = True
         thread.start()
 
-        emit('download_started', {'message': 'Download started'})
+        emit('download_started', {
+            'message': 'Downloading whole playlist...' if download_playlist else 'Download started',
+            'playlist': download_playlist
+        })
 
     except Exception as e:
         logger.error(f"Error starting download: {e}")
         emit('download_error', {'error': str(e)})
 
 
-def _run_download(url: str, target_dir: Path, client_sid: str):
-    """Run yt-dlp download and stream output to client."""
+def _snapshot_mp3_files(target_dir: Path) -> Dict[Path, float]:
+    """Map of mp3 files in target_dir to their modification time."""
+    snapshot = {}
+    for mp3 in target_dir.glob('*.mp3'):
+        try:
+            snapshot[mp3] = mp3.stat().st_mtime
+        except OSError:
+            continue
+    return snapshot
+
+
+def _find_new_mp3_files(target_dir: Path, before: Dict[Path, float]) -> List[Path]:
+    """Return mp3 files that were created or overwritten since the snapshot."""
+    changed = []
+    for mp3, mtime in sorted(_snapshot_mp3_files(target_dir).items()):
+        if mp3 not in before or before[mp3] != mtime:
+            changed.append(mp3)
+    return changed
+
+
+def _run_download(url: str, target_dir: Path, client_sid: str, download_playlist: bool = False):
+    """Run yt-dlp download and stream output to client.
+
+    Args:
+        url: YouTube video or playlist URL
+        target_dir: Directory the mp3/jpg files are written to (flat, no
+            per-playlist subfolder)
+        client_sid: Socket.IO room to stream the log to
+        download_playlist: True to download every entry of the playlist
+    """
     try:
         # Get yt-dlp executable path
         ytdlp = get_ytdlp_executable()
 
-        # Run yt-dlp with progress output
-        # --no-playlist ensures we only download the single video, not the entire playlist
+        # Files present before the run, so we can tell afterwards which ones
+        # this run produced (a playlist produces many).
+        before = _snapshot_mp3_files(target_dir)
+
+        # --yes-playlist / --no-playlist decides single video vs. whole playlist
         # --convert-thumbnails jpg converts webp and other formats to jpg for compatibility
+        # --print maps each finished file to its source video (filtered from the log)
         process = subprocess.Popen(
             [
                 ytdlp,
@@ -480,11 +551,16 @@ def _run_download(url: str, target_dir: Path, client_sid: str):
                 '--audio-format', 'mp3',
                 '--write-thumbnail',
                 '--convert-thumbnails', 'jpg',
-                '--no-playlist',
+                '--yes-playlist' if download_playlist else '--no-playlist',
                 '--newline',
                 '--progress',
+                # --print switches yt-dlp to quiet mode by default, --no-quiet
+                # keeps the log lines we stream to the client
+                '--print', f'after_move:{_PRINT_MARKER}\t%(filepath)s\t%(webpage_url)s',
+                '--no-quiet',
                 # Clean title-based name without the video ID (default template
-                # is '%(title)s [%(id)s].%(ext)s'), matching tools/yt_download.py
+                # is '%(title)s [%(id)s].%(ext)s'), matching tools/yt_download.py.
+                # Relative to cwd, so playlist entries land flat in target_dir.
                 '-o', '%(title)s.%(ext)s',
                 url
             ],
@@ -495,29 +571,48 @@ def _run_download(url: str, target_dir: Path, client_sid: str):
             bufsize=1
         )
 
-        # Stream output to client
+        # Stream output to client, collecting the file -> source URL mapping
+        file_urls: Dict[str, str] = {}
         for line in process.stdout:
             line = line.strip()
-            if line:
-                socketio.emit('download_log', {'line': line}, room=client_sid)
+            if not line:
+                continue
+            if line.startswith(_PRINT_MARKER + '\t'):
+                parts = line.split('\t')
+                if len(parts) == 3 and parts[2] and parts[2] != 'NA':
+                    file_urls[Path(parts[1]).name] = parts[2]
+                continue
+            socketio.emit('download_log', {'line': line}, room=client_sid)
 
         process.wait()
 
+        # Save metadata for every file of this run. Done even on failure: when
+        # a playlist entry is unavailable yt-dlp continues with the next one
+        # and still exits non-zero.
+        from stream_toy.audio_metadata_service import AudioMetadataService
+
+        downloaded = _find_new_mp3_files(target_dir, before)
+        for audio_file in downloaded:
+            metadata = AudioMetadataService.get_metadata(audio_file)
+            # Prefer the concrete video URL over the (possibly playlist) input
+            metadata.set_download_info(file_urls.get(audio_file.name, url))
+            logger.info(f"Saved download metadata for {audio_file.name}")
+
         if process.returncode == 0:
-            # Download succeeded - save metadata
-            from stream_toy.audio_metadata_service import AudioMetadataService
+            if download_playlist:
+                message = f'Playlist download completed - {len(downloaded)} track(s)'
+            else:
+                message = 'Download completed successfully'
 
-            # Find the downloaded file (most recent mp3)
-            mp3_files = sorted(target_dir.glob('*.mp3'), key=lambda p: p.stat().st_mtime, reverse=True)
-            if mp3_files:
-                audio_file = mp3_files[0]
-                metadata = AudioMetadataService.get_metadata(audio_file)
-                metadata.set_download_info(url)
-                logger.info(f"Saved download metadata for {audio_file.name}")
-
-            socketio.emit('download_complete', {'message': 'Download completed successfully'}, room=client_sid)
+            socketio.emit('download_complete', {
+                'message': message,
+                'file_count': len(downloaded)
+            }, room=client_sid)
         else:
-            socketio.emit('download_error', {'error': f'Download failed with code {process.returncode}'}, room=client_sid)
+            error = f'Download failed with code {process.returncode}'
+            if downloaded:
+                error += f' ({len(downloaded)} file(s) saved)'
+            socketio.emit('download_error', {'error': error}, room=client_sid)
 
     except Exception as e:
         logger.error(f"Error during download: {e}")
