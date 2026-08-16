@@ -437,7 +437,7 @@ StandardOutput=journal
 StandardError=journal
 
 # Resource limits
-MemoryLimit=512M
+MemoryMax=512M
 CPUQuota=90%
 
 [Install]
@@ -500,6 +500,16 @@ main() {
     log_info "Step 6: Creating system service..."
     create_systemd_service
     echo ""
+
+    # Step 7: Restart service if it is already running (update install).
+    # On a fresh install the service is left stopped; it starts on the
+    # reboot required for the boot configuration anyway.
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        log_info "Step 7: Restarting running service to apply update..."
+        systemctl restart "$SERVICE_NAME"
+        log_success "Service restarted"
+        echo ""
+    fi
 
     # Installation complete
     echo ""
