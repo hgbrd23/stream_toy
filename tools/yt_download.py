@@ -5,6 +5,8 @@ Download YouTube videos (or entire playlists) as MP3 + thumbnail image.
 Output format matches the audio_player convention:
     <target_dir>/<title>.mp3
     <target_dir>/<title>.jpg
+Playlist entries are prefixed with their zero-padded playlist index
+("03 - <title>.mp3") so alphabetical order equals playlist order.
 
 Usage:
     # Single video
@@ -68,8 +70,11 @@ def download(url: str, target_dir: Path, playlist: bool = True,
         '--convert-thumbnails', 'jpg',
         '--newline',
         '--progress',
-        # Put each file directly in target_dir with a clean title-based name
-        '-o', '%(title)s.%(ext)s',
+        # Put each file directly in target_dir with a clean title-based name.
+        # Playlist entries get a zero-padded index prefix ('03 - Title') so
+        # alphabetical sorting preserves playlist order; for single videos the
+        # prefix collapses to nothing.
+        '-o', '%(playlist_index&{:02d} - |)s%(title)s.%(ext)s',
     ]
 
     if not playlist:
