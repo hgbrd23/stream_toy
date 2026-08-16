@@ -246,6 +246,11 @@ Use the venv in .venv-emulator with requirements-emulator.
   - `main.py` currently executes a broad `chown` against `/dev/bus/usb/001/00*`. This is fragile and not portable. Replace with udev rules for production.
   - The script enumerates devices, opens each, sets brightness, starts a background read thread, and populates key images from `stream_toy_apps/memory_game/assets/tiles/tile_set_01/tile_XX.png`. It will sleep for a long period (`time.sleep(10000)`) at the end.
 
+## 4) Working with AI agents
+- When orchestrating work with subagents, delegate to Opus by default. Only use a smaller model (Sonnet or Haiku)
+  when it is safe — e.g. mechanical edits, simple searches, or well-specified isolated changes with low risk of
+  getting it wrong.
+
 ## 5) Code style and contribution notes
 - Match the existing Python style (PEP‑8-ish with pragmatic line lengths).
 - Keep imports absolute.
