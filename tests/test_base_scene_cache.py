@@ -249,5 +249,96 @@ class TestBaseSceneCache(unittest.TestCase):
         self.assertNotEqual(first_path, third_path)
 
 
+class TestEmptyCacheFileRecovery(unittest.TestCase):
+    """Zero-byte cache files (interrupted writes) must count as cache misses.
+
+    Regression test: a truncated cache file froze a hardware tile forever
+    because every layer treated 'file exists' as 'cache valid'.
+    """
+
+    def setUp(self):
+        self.temp_cache_dir = Path(tempfile.mkdtemp())
+        self.original_cache_dir = BaseScene.CACHE_DIR
+        BaseScene.CACHE_DIR = self.temp_cache_dir
+
+        self.device = MockDevice()
+        self.runtime = MockRuntime(self.device)
+        self.scene = TestScene(self.runtime)
+
+    def tearDown(self):
+        BaseScene.CACHE_DIR = self.original_cache_dir
+        if self.temp_cache_dir.exists():
+            shutil.rmtree(self.temp_cache_dir)
+
+    def test_is_cached_false_for_empty_file(self):
+        cache_key = "test|empty_file"
+        self.scene._get_cache_path(cache_key).touch()
+        self.assertFalse(self.scene._is_cached(cache_key))
+
+    def test_cache_image_overwrites_empty_file(self):
+        cache_key = "test|overwrite_empty"
+        cache_path = self.scene._get_cache_path(cache_key)
+        cache_path.touch()
+
+        img = Image.new('RGB', (112, 112), 'blue')
+        result_path = self.scene._cache_image(cache_key, img)
+
+        self.assertEqual(result_path, cache_path)
+        self.assertGreater(cache_path.stat().st_size, 0)
+
+    def test_set_tile_image_with_text_regenerates_empty_cache(self):
+        # Create a source image to compose with
+        source = self.temp_cache_dir / "cover.png"
+        Image.new('RGB', (112, 112), 'red').save(source)
+
+        self.scene.set_tile_image_with_text(0, 0, str(source), "Title")
+        cache_path = Path(self.runtime.state_manager.tile_calls[0]['path'])
+        self.assertGreater(cache_path.stat().st_size, 0)
+
+        # Simulate an interrupted write and render again
+        cache_path.write_bytes(b"")
+        self.runtime.state_manager.tile_calls.clear()
+        self.scene.set_tile_image_with_text(0, 0, str(source), "Title")
+
+        self.assertEqual(
+            Path(self.runtime.state_manager.tile_calls[0]['path']), cache_path)
+        self.assertGreater(cache_path.stat().st_size, 0)
+
+
+class TestNativeCacheRecovery(unittest.TestCase):
+    """_ensure_native_cached must regenerate empty native JPEGs atomically."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+        # Bypass __init__ (it would talk to USB hardware); the methods under
+        # test only use class attributes and other pure helpers.
+        from stream_toy.device.streamdock293v3_device import StreamDock293V3Device
+        self.device = StreamDock293V3Device.__new__(StreamDock293V3Device)
+
+        self.source = self.temp_dir / "tile.png"
+        Image.new('RGB', (112, 112), 'green').save(self.source)
+
+    def tearDown(self):
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+
+    def test_regenerates_empty_native_cache(self):
+        native_path = self.device._get_cached_native_path(self.source)
+        native_path.touch()  # empty file, mtime newer than source
+
+        result = self.device._ensure_native_cached(self.source)
+
+        self.assertEqual(result, native_path)
+        self.assertGreater(native_path.stat().st_size, 0)
+        with Image.open(native_path) as img:
+            self.assertEqual(img.size, (112, 112))
+
+    def test_no_temp_files_left_behind(self):
+        self.device._ensure_native_cached(self.source)
+        leftovers = list(self.temp_dir.glob(".tmp_*"))
+        self.assertEqual(leftovers, [])
+
+
 if __name__ == '__main__':
     unittest.main()

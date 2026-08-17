@@ -115,6 +115,18 @@ class BaseScene(ABC):
         filename = f"{prefix}_{key_hash}.png"
         return self.CACHE_DIR / filename
 
+    @staticmethod
+    def _is_valid_cache_file(path: Path) -> bool:
+        """A cache file is only usable if it exists and is non-empty.
+
+        Zero-byte files are left behind when a write is interrupted (crash,
+        SIGKILL) and must count as cache misses so they get regenerated.
+        """
+        try:
+            return path.stat().st_size > 0
+        except OSError:
+            return False
+
     def _is_cached(self, cache_key: str) -> bool:
         """
         Check if an image is already cached on disk.
@@ -126,7 +138,7 @@ class BaseScene(ABC):
             True if cache file exists, False otherwise
         """
         cache_path = self._get_cache_path(cache_key)
-        return cache_path.exists()
+        return self._is_valid_cache_file(cache_path)
 
     def _cache_image(self, cache_key: str, image: Image.Image) -> Path:
         """
@@ -147,7 +159,7 @@ class BaseScene(ABC):
         # Thread-safe check and write with lock
         with _CACHE_LOCK:
             # Double-check if file exists (another thread might have created it)
-            if cache_path.exists():
+            if self._is_valid_cache_file(cache_path):
                 logger.debug(f"Cache already exists: {cache_path.name}")
                 return cache_path
 
@@ -502,7 +514,7 @@ class BaseScene(ABC):
         # Thread-safe: check cache and generate inside lock to prevent duplicate work
         with _CACHE_LOCK:
             # Check if already cached
-            if cache_path.exists():
+            if self._is_valid_cache_file(cache_path):
                 logger.debug(f"Using cached image+text: {cache_path.name}")
                 self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
                 return

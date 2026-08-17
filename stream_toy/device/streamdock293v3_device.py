@@ -262,6 +262,11 @@ class StreamDock293V3Device(StreamToyDevice):
         if not cache_path.exists():
             logger.debug(f"Cache miss: {cache_path}")
             need_regenerate = True
+        elif cache_path.stat().st_size == 0:
+            # Interrupted write left a truncated file; the mtime check below
+            # would keep it forever and the device silently drops empty JPEGs.
+            logger.warning(f"Empty cache file, regenerating: {cache_path}")
+            need_regenerate = True
         else:
             # Compare modification times
             source_mtime = source_path.stat().st_mtime
@@ -286,11 +291,19 @@ class StreamDock293V3Device(StreamToyDevice):
             # Save as JPEG with quality=85
             # Lower quality (85 vs 95) prevents corruption on hardware device
             # Likely due to smaller file size fitting device buffer limits
-            native_image.save(
-                cache_path,
-                format='JPEG',
-                quality=85
-            )
+            # Atomic write (tmp + replace) so a crash mid-write cannot leave a
+            # truncated file behind that the freshness check would keep forever.
+            tmp_path = cache_path.parent / f".tmp_{os.getpid()}_{cache_path.name}"
+            try:
+                native_image.save(
+                    tmp_path,
+                    format='JPEG',
+                    quality=85
+                )
+                os.replace(tmp_path, cache_path)
+            except Exception:
+                tmp_path.unlink(missing_ok=True)
+                raise
 
             logger.info(f"Cache generated: {cache_path}")
 
