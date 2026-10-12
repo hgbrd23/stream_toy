@@ -10,6 +10,11 @@ PyYAML>=6.0
 
 # For downloading audio from Youtube
 yt-dlp[default]
+# For downloading Spotify tracks/albums/playlists (audio is fetched from
+# YouTube Music, cover art is embedded into the mp3 and extracted by us)
+spotdl
+# Reads embedded cover art written by spotdl (also a yt-dlp dependency)
+mutagen
 # JS runtime required by yt-dlp for YouTube challenge solving.
 # The real device gets a system-wide deno via install.sh instead.
 deno

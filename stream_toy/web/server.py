@@ -7,12 +7,15 @@ Provides Flask + Socket.IO server for real-time device emulation.
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 import base64
+import importlib.util
+import re
 from io import BytesIO
 import logging
 from typing import Optional, List, Tuple, Dict
 from pathlib import Path
 import subprocess
 import json
+import os
 import threading
 import sys
 import shutil
@@ -21,6 +24,7 @@ import urllib.parse
 import urllib.request
 
 from stream_toy.youtube_url import classify_youtube_url, resolve_playlist_choice
+from stream_toy import spotify_url
 
 logger = logging.getLogger(__name__)
 
@@ -29,33 +33,44 @@ logger = logging.getLogger(__name__)
 _PRINT_MARKER = 'STREAMTOY_FILE'
 
 
-def get_ytdlp_executable() -> str:
+def find_tool_executable(name: str) -> str:
     """
-    Get path to yt-dlp executable.
+    Get the path of a console script such as ``yt-dlp`` or ``spotdl``.
 
     First tries to find it in the same venv as the current Python,
     otherwise falls back to system PATH.
     """
-    # Try to find yt-dlp in the same directory as the Python executable
+    # Try to find the tool in the same directory as the Python executable
     python_dir = Path(sys.executable).parent
-    ytdlp_path = python_dir / 'yt-dlp'
-
-    if ytdlp_path.exists() and ytdlp_path.is_file():
-        return str(ytdlp_path)
-
-    # Try with .exe extension (Windows)
-    ytdlp_exe = python_dir / 'yt-dlp.exe'
-    if ytdlp_exe.exists() and ytdlp_exe.is_file():
-        return str(ytdlp_exe)
+    for candidate in (python_dir / name, python_dir / f'{name}.exe'):
+        if candidate.exists() and candidate.is_file():
+            return str(candidate)
 
     # Fall back to searching in PATH
-    ytdlp_in_path = shutil.which('yt-dlp')
-    if ytdlp_in_path:
-        return ytdlp_in_path
+    in_path = shutil.which(name)
+    if in_path:
+        return in_path
 
-    # Last resort - just return 'yt-dlp' and hope it's in PATH
-    logger.warning("yt-dlp not found in venv or PATH, using 'yt-dlp' as fallback")
-    return 'yt-dlp'
+    # Last resort - just return the name and hope it's in PATH
+    logger.warning(f"{name} not found in venv or PATH, using '{name}' as fallback")
+    return name
+
+
+def get_ytdlp_executable() -> str:
+    """Get path to yt-dlp executable (see find_tool_executable())."""
+    return find_tool_executable('yt-dlp')
+
+
+# Wrapper that runs spotDL with a fix for its YouTube Music search (see the
+# module docstring). Started with the current interpreter so it uses the same
+# venv as the server.
+_SPOTDL_RUNNER = Path(__file__).resolve().parent.parent / 'spotdl_runner.py'
+
+
+def get_spotdl_command() -> List[str]:
+    """Command prefix that runs spotDL from this venv (replaces the ``spotdl`` script)."""
+    return [sys.executable, str(_SPOTDL_RUNNER)]
+
 
 # Global references
 app = Flask(__name__)
@@ -167,18 +182,31 @@ def emit_led_update(led_data: List[Tuple[int, int, int]]) -> None:
 
 # YouTube Downloader Routes
 
-@app.route('/youtube-downloader')
-def youtube_downloader():
-    """Serve YouTube downloader page."""
-    return render_template('youtube_downloader.html')
+@app.route('/downloader')
+def downloader():
+    """Serve the music downloader page (YouTube + Spotify)."""
+    return render_template('downloader.html')
 
 
-@app.route('/api/youtube/classify', methods=['POST'])
-def classify_youtube_download():
-    """Classify a URL as a single video, a whole playlist or ambiguous.
+def classify_download_url(url: str) -> Dict[str, str]:
+    """Decide which downloader handles a URL and what the URL points at.
 
-    Purely local (no network), so the downloader page can ask the playlist
-    question immediately - even when YouTube is unreachable.
+    Returns:
+        ``{'provider': 'spotify', 'kind': track|album|playlist|artist|unknown}``
+        or ``{'provider': 'youtube', 'kind': video|playlist|ambiguous}``.
+        Anything that is not Spotify goes to yt-dlp, which supports many sites.
+    """
+    if spotify_url.is_spotify_url(url):
+        return {'provider': 'spotify', 'kind': spotify_url.classify_spotify_url(url)}
+    return {'provider': 'youtube', 'kind': classify_youtube_url(url)}
+
+
+@app.route('/api/download/classify', methods=['POST'])
+def classify_download():
+    """Classify a URL: which provider and single item vs. whole collection.
+
+    Purely local (no network), so the downloader page can adapt its labels and
+    ask the playlist question immediately - even when the internet is down.
     """
     try:
         data = request.get_json()
@@ -187,22 +215,47 @@ def classify_youtube_download():
         if not url:
             return jsonify({'error': 'URL is required'}), 400
 
-        return jsonify({'kind': classify_youtube_url(url)})
+        return jsonify(classify_download_url(url))
 
     except Exception as e:
-        logger.error(f"Error classifying YouTube URL: {e}")
+        logger.error(f"Error classifying URL: {e}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/youtube/title', methods=['POST'])
-def get_youtube_title():
-    """Get video title from YouTube URL via the oEmbed API.
+def resolve_spotify_short_link(url: str, timeout: float = 10) -> str:
+    """Follow a ``spotify.link`` redirect to its ``open.spotify.com`` target.
 
-    Deliberately avoids yt-dlp: a full extraction takes ~60s on the
+    Returns the input unchanged for anything that is not a short link.
+    """
+    if not spotify_url.is_spotify_short_link(url):
+        return url
+    request_obj = urllib.request.Request(url, method='HEAD',
+                                         headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+        resolved = response.geturl()
+    logger.info(f"Resolved Spotify short link {url} -> {resolved}")
+    return resolved
+
+
+def _oembed_title(oembed_endpoint: str, url: str) -> str:
+    """Fetch the title of a media URL through an oEmbed endpoint."""
+    oembed_url = oembed_endpoint + '?' + urllib.parse.urlencode(
+        {'url': url, 'format': 'json'})
+    with urllib.request.urlopen(oembed_url, timeout=10) as response:
+        payload = json.load(response)
+    return payload.get('title', '').strip()
+
+
+@app.route('/api/download/title', methods=['POST'])
+def get_download_title():
+    """Get the title of a YouTube or Spotify URL via the oEmbed APIs.
+
+    Deliberately avoids yt-dlp/spotdl: a full extraction takes ~60s on the
     Pi Zero 2 W, while oEmbed answers in well under a second. The title is
     informational only - downloads must not depend on this endpoint.
     """
     url = ''
+    provider = 'youtube'
     try:
         data = request.get_json()
         url = data.get('url', '').strip()
@@ -210,26 +263,27 @@ def get_youtube_title():
         if not url:
             return jsonify({'error': 'URL is required'}), 400
 
-        oembed_url = 'https://www.youtube.com/oembed?' + urllib.parse.urlencode(
-            {'url': url, 'format': 'json'})
-        with urllib.request.urlopen(oembed_url, timeout=10) as response:
-            payload = json.load(response)
+        if spotify_url.is_spotify_url(url):
+            provider = 'spotify'
+            url = resolve_spotify_short_link(url)
+            title = _oembed_title('https://open.spotify.com/oembed', url)
+        else:
+            title = _oembed_title('https://www.youtube.com/oembed', url)
 
-        title = payload.get('title', '').strip()
         if not title:
             return jsonify({'error': 'No title found'}), 400
 
         return jsonify({'title': title})
 
     except urllib.error.HTTPError as e:
-        # 400/404: invalid or unknown video; 401/403: embedding disabled
+        # 400/404: invalid or unknown item; 401/403: embedding disabled
         logger.warning(f"oEmbed title lookup failed for {url}: HTTP {e.code}")
-        return jsonify({'error': 'Could not fetch video title'}), 400
+        return jsonify({'error': 'Could not fetch title'}), 400
     except urllib.error.URLError as e:
         logger.error(f"oEmbed title lookup unreachable for {url}: {e}")
-        return jsonify({'error': 'YouTube not reachable'}), 408
+        return jsonify({'error': f'{provider.capitalize()} not reachable'}), 408
     except Exception as e:
-        logger.error(f"Error fetching YouTube title: {e}")
+        logger.error(f"Error fetching title: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -450,7 +504,7 @@ def delete_audio_item():
 
 @socketio.on('start_download')
 def handle_download(data):
-    """Handle YouTube download request."""
+    """Handle a YouTube (yt-dlp) or Spotify (spotdl) download request."""
     try:
         url = data.get('url', '').strip()
         target_dir = data.get('target_dir', 'data/audio_player')
@@ -460,13 +514,24 @@ def handle_download(data):
             emit('download_error', {'error': 'URL is required'})
             return
 
-        # Decide single video vs. whole playlist. Ambiguous URLs (video + list)
-        # require an explicit answer from the client.
-        try:
-            download_playlist = resolve_playlist_choice(url, requested_playlist)
-        except ValueError as e:
-            emit('download_error', {'error': str(e), 'needs_playlist_choice': True})
-            return
+        is_spotify = spotify_url.is_spotify_url(url)
+        download_playlist = False
+        if is_spotify:
+            kind = spotify_url.classify_spotify_url(url)
+            if kind == spotify_url.ARTIST:
+                emit('download_error', {
+                    'error': 'Artist links download the whole discography and are '
+                             'not supported - use an album or playlist link'})
+                return
+            download_playlist = spotify_url.is_collection(kind)
+        else:
+            # Decide single video vs. whole playlist. Ambiguous URLs (video +
+            # list) require an explicit answer from the client.
+            try:
+                download_playlist = resolve_playlist_choice(url, requested_playlist)
+            except ValueError as e:
+                emit('download_error', {'error': str(e), 'needs_playlist_choice': True})
+                return
 
         # Ensure path is relative to project root (parent of stream_toy/)
         base_path = Path(__file__).parent.parent.parent.resolve()
@@ -486,27 +551,30 @@ def handle_download(data):
         full_target_dir.mkdir(parents=True, exist_ok=True)
 
         # Start download in background thread
-        thread = threading.Thread(
-            target=_run_download,
-            args=(url, full_target_dir, request.sid, download_playlist)
-        )
-        thread.daemon = True
+        if is_spotify:
+            worker, args = _run_spotify_download, (url, full_target_dir, request.sid)
+        else:
+            worker, args = _run_download, (url, full_target_dir, request.sid, download_playlist)
+        thread = threading.Thread(target=worker, args=args, daemon=True)
         thread.start()
 
-        emit('download_started', {
-            'message': 'Downloading whole playlist...' if download_playlist else 'Download started',
-            'playlist': download_playlist
-        })
+        if is_spotify:
+            message = 'Spotify download started (audio is fetched from YouTube Music)'
+        elif download_playlist:
+            message = 'Downloading whole playlist...'
+        else:
+            message = 'Download started'
+        emit('download_started', {'message': message, 'playlist': download_playlist})
 
     except Exception as e:
         logger.error(f"Error starting download: {e}")
         emit('download_error', {'error': str(e)})
 
 
-def _snapshot_mp3_files(target_dir: Path) -> Dict[Path, float]:
-    """Map of mp3 files in target_dir to their modification time."""
+def _snapshot_mp3_files(target_dir: Path, recursive: bool = False) -> Dict[Path, float]:
+    """Map of mp3 files in target_dir (optionally its subfolders) to their mtime."""
     snapshot = {}
-    for mp3 in target_dir.glob('*.mp3'):
+    for mp3 in (target_dir.rglob('*.mp3') if recursive else target_dir.glob('*.mp3')):
         try:
             snapshot[mp3] = mp3.stat().st_mtime
         except OSError:
@@ -514,10 +582,11 @@ def _snapshot_mp3_files(target_dir: Path) -> Dict[Path, float]:
     return snapshot
 
 
-def _find_new_mp3_files(target_dir: Path, before: Dict[Path, float]) -> List[Path]:
+def _find_new_mp3_files(target_dir: Path, before: Dict[Path, float],
+                        recursive: bool = False) -> List[Path]:
     """Return mp3 files that were created or overwritten since the snapshot."""
     changed = []
-    for mp3, mtime in sorted(_snapshot_mp3_files(target_dir).items()):
+    for mp3, mtime in sorted(_snapshot_mp3_files(target_dir, recursive).items()):
         if mp3 not in before or before[mp3] != mtime:
             changed.append(mp3)
     return changed
@@ -622,6 +691,163 @@ def _run_download(url: str, target_dir: Path, client_sid: str, download_playlist
         socketio.emit('download_error', {'error': str(e)}, room=client_sid)
 
 
+# spotDL output templates. Collections (playlist/album) go into one folder
+# named after the list; the position prefix keeps the audio player's
+# alphabetical sort in list order. {list-position} is zero-padded by spotdl to
+# the width of the list length, but it is unset for albums, which use the
+# track number instead. Single tracks land directly in the target folder.
+_SPOTDL_TEMPLATES = {
+    spotify_url.PLAYLIST: '{list-name}/{list-position} {title}.{output-ext}',
+    spotify_url.ALBUM: '{list-name}/{track-number} {title}.{output-ext}',
+    spotify_url.TRACK: '{artist} - {title}.{output-ext}',
+}
+
+# Prefix of the spotdl info line emitted for each finished track
+_SPOTDL_DONE_PREFIX = 'Downloaded "'
+# spotdl's "Found 5 songs in <name> (Album)" line after resolving the query
+_SPOTDL_FOUND_RE = re.compile(r'^Found (\d+) songs? in ')
+
+
+def build_spotdl_command(url: str, kind: str, target_dir: Path, spotdl: List[str],
+                         ffmpeg: Optional[str] = None) -> List[str]:
+    """Build the spotdl command line for a classified Spotify URL.
+
+    Args:
+        url: Resolved open.spotify.com URL (no short links)
+        kind: spotify_url.TRACK, ALBUM or PLAYLIST
+        target_dir: Folder the files (or the collection folder) are written to
+        spotdl: Command prefix that starts spotdl (see get_spotdl_command())
+        ffmpeg: Path of ffmpeg, or None to let spotdl find it
+
+    Raises:
+        ValueError: For kinds spotdl should not be asked to download
+    """
+    template = _SPOTDL_TEMPLATES.get(kind)
+    if template is None:
+        raise ValueError(f'Unsupported Spotify link type: {kind}')
+
+    cmd = [
+        *spotdl, 'download', url,
+        '--format', 'mp3',
+        '--output', str(target_dir / template),
+        # Plain log lines instead of rich progress bars, so they can be
+        # streamed to the browser log
+        '--simple-tui',
+        '--print-errors',
+        # One download at a time: keeps memory use low on the Pi Zero 2 W and
+        # avoids spotdl's temp file collision when two tracks of a release
+        # match the same YouTube video
+        '--threads', '1',
+    ]
+    if ffmpeg:
+        cmd.extend(['--ffmpeg', ffmpeg])
+    return cmd
+
+
+def _run_spotify_download(url: str, target_dir: Path, client_sid: str):
+    """Run spotdl and stream its output to the client.
+
+    Playlists and albums are saved into a subfolder of target_dir named after
+    the list, single tracks directly into target_dir. spotdl embeds the cover
+    into the mp3 tags; it is extracted to a sidecar jpg for the audio player.
+    """
+    try:
+        from stream_toy.audio_metadata_service import AudioMetadataService
+        from stream_toy.cover_art import extract_embedded_cover
+
+        # Short links only reveal their type after following the redirect
+        url = resolve_spotify_short_link(url)
+        kind = spotify_url.classify_spotify_url(url)
+        if kind not in _SPOTDL_TEMPLATES:
+            socketio.emit('download_error', {
+                'error': f'Unsupported Spotify link type: {kind}'}, room=client_sid)
+            return
+
+        cmd = build_spotdl_command(url, kind, target_dir, get_spotdl_command(),
+                                   shutil.which('ffmpeg'))
+        logger.info(f"Running spotdl: {' '.join(cmd)}")
+
+        before = _snapshot_mp3_files(target_dir, recursive=True)
+        dirs_before = {d for d in target_dir.iterdir() if d.is_dir()}
+
+        # spotdl logs through rich: disable colours and wrapping of long lines
+        env = dict(os.environ, NO_COLOR='1', TERM='dumb', COLUMNS='500',
+                   PYTHONUNBUFFERED='1')
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(target_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
+
+        finished_tracks = 0
+        expected_tracks = None
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(_SPOTDL_DONE_PREFIX):
+                finished_tracks += 1
+            found = _SPOTDL_FOUND_RE.match(line)
+            if found:
+                expected_tracks = int(found.group(1))
+            socketio.emit('download_log', {'line': line}, room=client_sid)
+
+        process.wait()
+
+        # Metadata and cover art for every file of this run. spotdl exits 0
+        # even when single tracks failed, so the file count is the truth.
+        downloaded = _find_new_mp3_files(target_dir, before, recursive=True)
+        for audio_file in downloaded:
+            AudioMetadataService.get_metadata(audio_file).set_download_info(url)
+            extract_embedded_cover(audio_file)
+            logger.info(f"Saved download metadata for {audio_file.name}")
+
+        # spotdl creates the collection folder before the first match. Remove
+        # it again when nothing landed in it, so a failed run leaves no trace.
+        for new_dir in {d for d in target_dir.iterdir() if d.is_dir()} - dirs_before:
+            if not any(new_dir.iterdir()):
+                new_dir.rmdir()
+                logger.info(f"Removed empty folder {new_dir.name}")
+
+        if process.returncode != 0 or not downloaded:
+            if process.returncode != 0:
+                error = f'Download failed with code {process.returncode}'
+            else:
+                error = ('No files were downloaded - spotDL could not find the tracks '
+                         'on YouTube Music (Spotify exclusive content such as '
+                         'audiobooks cannot be fetched)')
+            if downloaded:
+                error += f' ({len(downloaded)} file(s) saved)'
+            socketio.emit('download_error', {'error': error}, room=client_sid)
+            return
+
+        if kind == spotify_url.TRACK:
+            message = 'Download completed successfully'
+        else:
+            folder = downloaded[0].parent.name
+            message = f'{kind.capitalize()} download completed - {len(downloaded)}'
+            if expected_tracks and expected_tracks > len(downloaded):
+                # spotdl exits 0 even when tracks had no match on YouTube Music
+                missing = expected_tracks - len(downloaded)
+                message += f' of {expected_tracks} track(s) in "{folder}" ({missing} not found, see log)'
+            else:
+                message += f' track(s) in "{folder}"'
+            if finished_tracks and finished_tracks < len(downloaded):
+                message += f' ({len(downloaded) - finished_tracks} already existed)'
+        socketio.emit('download_complete', {
+            'message': message,
+            'file_count': len(downloaded)
+        }, room=client_sid)
+
+    except Exception as e:
+        logger.error(f"Error during Spotify download: {e}")
+        socketio.emit('download_error', {'error': str(e)}, room=client_sid)
+
+
 def run_server(host: str = '0.0.0.0', port: int = 5000) -> None:
     """
     Run the web server (blocking).
@@ -630,9 +856,10 @@ def run_server(host: str = '0.0.0.0', port: int = 5000) -> None:
         host: Host address to bind
         port: Port to listen on
     """
-    # Log yt-dlp location for diagnostics
-    ytdlp_path = get_ytdlp_executable()
-    logger.info(f"Using yt-dlp from: {ytdlp_path}")
+    # Log downloader locations for diagnostics
+    logger.info(f"Using yt-dlp from: {get_ytdlp_executable()}")
+    if importlib.util.find_spec('spotdl') is None:
+        logger.warning("spotdl is not installed - Spotify downloads will not work")
 
     logger.info(f"Starting emulator web server on {host}:{port}")
     socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)

@@ -380,10 +380,16 @@ setup_venv() {
     log_info "Installing Python dependencies (this may take several minutes)..."
     "$VENV_DIR/bin/pip" install -r "${INSTALL_DIR}/requirements.txt" > /dev/null 2>&1
 
-    # Install yt-dlp for YouTube audio downloads
-    log_info "Installing yt-dlp..."
-    "$VENV_DIR/bin/pip" install yt-dlp > /dev/null 2>&1
-    log_success "yt-dlp installed"
+    # Install the downloaders explicitly (and upgrade them on update installs):
+    # yt-dlp for YouTube, spotdl for Spotify tracks/albums/playlists. Both are
+    # also listed in requirements.txt; this step makes sure they are current.
+    log_info "Installing yt-dlp and spotdl..."
+    "$VENV_DIR/bin/pip" install --upgrade yt-dlp spotdl > /dev/null 2>&1
+    if "$VENV_DIR/bin/spotdl" --version > /dev/null 2>&1; then
+        log_success "yt-dlp and spotdl installed"
+    else
+        log_warning "spotdl installation failed - Spotify downloads will not work"
+    fi
 
     log_success "Python environment configured"
 }

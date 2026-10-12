@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Music Downloader</title>
+    <title>Music Downloader</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         * {
@@ -132,6 +132,10 @@
             color: #888;
             font-size: 13px;
             margin-bottom: 12px;
+        }
+
+        .playlist-choice-hint:empty {
+            display: none;
         }
 
         .playlist-choice-options {
@@ -795,18 +799,19 @@
     <a href="/" class="back-link">← Back to Emulator</a>
     <div class="container">
         <div class="header">
-            <h1>🎵 YouTube Music Downloader</h1>
-            <p>Download music from YouTube and save to your audio library</p>
+            <h1>🎵 Music Downloader</h1>
+            <p>Download music from YouTube or Spotify and save to your audio library</p>
         </div>
 
         <div class="content">
             <!-- URL Input Section -->
             <div class="section">
-                <div class="section-title">1. YouTube URL</div>
+                <div class="section-title">1. YouTube or Spotify URL</div>
                 <div class="input-group">
-                    <label for="youtube-url">Paste YouTube URL:</label>
-                    <input type="text" id="youtube-url" placeholder="https://www.youtube.com/watch?v=...">
-                    <div id="video-title" class="video-title">Paste a URL to see the video title</div>
+                    <label for="youtube-url">Paste YouTube or Spotify link:</label>
+                    <input type="text" id="youtube-url" placeholder="https://www.youtube.com/watch?v=...  or  https://open.spotify.com/playlist/...">
+                    <div id="video-title" class="video-title">Paste a URL to see the title</div>
+                    <div id="provider-hint" class="playlist-choice-hint"></div>
                 </div>
 
                 <!-- Playlist question (only for URLs that contain a video AND a playlist) -->
@@ -865,7 +870,10 @@
         let currentPath = 'data/audio_player';
         let selectedDirectory = 'data/audio_player';
         let isDownloading = false;
-        // 'video' | 'playlist' | 'ambiguous' - decided by /api/youtube/classify
+        // Decided by /api/download/classify:
+        // provider 'youtube' -> kind 'video' | 'playlist' | 'ambiguous'
+        // provider 'spotify' -> kind 'track' | 'album' | 'playlist' | 'artist' | 'unknown'
+        let urlProvider = 'youtube';
         let urlKind = 'video';
         // Answer to the playlist question (null = not answered yet)
         let playlistChoice = null;
@@ -874,6 +882,7 @@
         const urlInput = document.getElementById('youtube-url');
         const videoTitleDiv = document.getElementById('video-title');
         const playlistChoiceDiv = document.getElementById('playlist-choice');
+        const providerHintDiv = document.getElementById('provider-hint');
         const choiceSingleBtn = document.getElementById('choice-single');
         const choicePlaylistBtn = document.getElementById('choice-playlist');
         const breadcrumb = document.getElementById('breadcrumb');
@@ -893,8 +902,10 @@
             clearTimeout(urlTimeout);
             const url = e.target.value.trim();
 
-            // Every URL change invalidates the previous playlist answer
+            // Every URL change invalidates the previous classification and answer
+            urlProvider = 'youtube';
             urlKind = 'video';
+            providerHintDiv.textContent = '';
             delete videoTitleDiv.dataset.title;
             setPlaylistChoice(null);
             playlistChoiceDiv.classList.remove('visible');
@@ -903,7 +914,7 @@
             updateDownloadButton();
 
             if (!url) {
-                videoTitleDiv.textContent = 'Paste a URL to see the video title';
+                videoTitleDiv.textContent = 'Paste a URL to see the title';
                 videoTitleDiv.classList.remove('loaded');
                 return;
             }
@@ -917,10 +928,10 @@
             }, 500);
         });
 
-        // Ask the server what this URL points at (local, no YouTube round trip)
+        // Ask the server what this URL points at (local, no network round trip)
         async function classifyUrl(url) {
             try {
-                const response = await fetch('/api/youtube/classify', {
+                const response = await fetch('/api/download/classify', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url })
@@ -931,17 +942,36 @@
                 // Ignore responses for URLs the user has since changed
                 if (urlInput.value.trim() !== url) return;
 
+                urlProvider = response.ok ? data.provider : 'youtube';
                 urlKind = response.ok ? data.kind : 'video';
             } catch (error) {
                 if (urlInput.value.trim() !== url) return;
+                urlProvider = 'youtube';
                 urlKind = 'video';
             }
 
-            // Ask only when the URL means both things at once
-            if (urlKind === 'ambiguous') {
+            if (urlProvider === 'spotify') {
+                // Spotify links are never ambiguous: spotDL decides by link type
+                playlistChoiceDiv.classList.remove('visible');
+                setPlaylistChoice(isSpotifyCollection());
+                if (urlKind === 'artist') {
+                    providerHintDiv.textContent = 'Spotify artist links download the whole ' +
+                        'discography and are not supported - paste an album or playlist link.';
+                } else if (isSpotifyCollection()) {
+                    providerHintDiv.textContent = 'Spotify: all tracks are saved in a new ' +
+                        'folder named after the ' + spotifyKindLabel() + ' inside the selected folder.';
+                } else if (urlKind === 'unknown') {
+                    providerHintDiv.textContent = 'Spotify link - the type is resolved when the download starts.';
+                } else {
+                    providerHintDiv.textContent = 'Spotify: the track is saved directly in the selected folder.';
+                }
+            } else if (urlKind === 'ambiguous') {
+                // Ask only when the URL means both things at once
+                providerHintDiv.textContent = '';
                 setPlaylistChoice(null);
                 playlistChoiceDiv.classList.add('visible');
             } else {
+                providerHintDiv.textContent = '';
                 setPlaylistChoice(urlKind === 'playlist');
                 playlistChoiceDiv.classList.remove('visible');
             }
@@ -949,10 +979,23 @@
             updateDownloadButton();
         }
 
-        // Fetch video title (informational only - never blocks downloading)
+        function isSpotifyCollection() {
+            return urlProvider === 'spotify' && ['album', 'playlist'].includes(urlKind);
+        }
+
+        function isUnsupportedSpotifyLink() {
+            return urlProvider === 'spotify' && urlKind === 'artist';
+        }
+
+        // 'album' | 'playlist' | 'artist' | 'track' | 'link' for labels
+        function spotifyKindLabel() {
+            return urlKind === 'unknown' ? 'link' : urlKind;
+        }
+
+        // Fetch the title (informational only - never blocks downloading)
         async function fetchVideoTitle(url) {
             try {
-                const response = await fetch('/api/youtube/title', {
+                const response = await fetch('/api/download/title', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url })
@@ -985,6 +1028,13 @@
             const title = videoTitleDiv.dataset.title;
             if (!title) return;
 
+            if (urlProvider === 'spotify') {
+                const label = spotifyKindLabel();
+                videoTitleDiv.textContent = isSpotifyCollection()
+                    ? `📃 Spotify ${label}: ${title}`
+                    : `🎵 Spotify ${label}: ${title}`;
+                return;
+            }
             videoTitleDiv.textContent = playlistChoice === true
                 ? `📃 Whole playlist: ${title}`
                 : `🎵 ${title}`;
@@ -1260,10 +1310,16 @@
             // Ambiguous URLs must be answered before downloading
             const needsAnswer = urlKind === 'ambiguous' && playlistChoice === null;
 
-            downloadBtn.disabled = !hasValidUrl || !hasDirectory || isDownloading || needsAnswer;
-            downloadBtn.textContent = playlistChoice === true
-                ? 'Start Playlist Download'
-                : 'Start Download';
+            downloadBtn.disabled = !hasValidUrl || !hasDirectory || isDownloading || needsAnswer ||
+                isUnsupportedSpotifyLink();
+            if (isSpotifyCollection()) {
+                const label = urlKind.charAt(0).toUpperCase() + urlKind.slice(1);
+                downloadBtn.textContent = `Start ${label} Download`;
+            } else {
+                downloadBtn.textContent = playlistChoice === true
+                    ? 'Start Playlist Download'
+                    : 'Start Download';
+            }
         }
 
         // Show status message
@@ -1288,7 +1344,7 @@
             logContainer.innerHTML = '';
             logContainer.classList.add('visible');
             showStatus(playlistChoice === true
-                ? 'Starting playlist download...'
+                ? `Starting ${isSpotifyCollection() ? urlKind : 'playlist'} download...`
                 : 'Starting download...', 'info');
 
             socket.emit('start_download', {

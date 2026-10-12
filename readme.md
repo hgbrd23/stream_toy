@@ -35,7 +35,7 @@ MagicBox is a **complete hardware + software project** that creates a portable, 
 - **Modular App System**: Easy to add new games and apps
 - **Multiple Input Devices**: Real hardware + web browser emulator for development
 - **Persistent Settings**: Volume and playback positions saved across reboots
-- **Audio Player**: Play MP3/FLAC with resume, seek controls, cover art, and YouTube download support
+- **Audio Player**: Play MP3/FLAC with resume, seek controls, cover art, and YouTube/Spotify download support
 - **Interactive Games**: Memory game, LED playground
 - **LED Animations**: Background animations with support for adafruit-led-animation library
 - **Scene-Based Architecture**: Clean scene management with async/await patterns
@@ -45,7 +45,7 @@ MagicBox is a **complete hardware + software project** that creates a portable, 
 
 | App | Description |
 |-----|-------------|
-| **Audio Player** | Play audiobooks and music with playback resume, seek controls, folder navigation, and YouTube downloads |
+| **Audio Player** | Play audiobooks and music with playback resume, seek controls, folder navigation, and YouTube/Spotify downloads |
 | **Memory Game** | Classic memory matching game with multiple tile sets |
 | **LED Playground** | Experiment with different LED animation effects |
 
