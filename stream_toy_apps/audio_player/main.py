@@ -10,7 +10,7 @@ import logging
 from stream_toy.scene.base_scene import BaseScene
 from stream_toy.sound_manager import PlaybackStatus
 
-from .audio_files import find_cover_art, list_directory_entries
+from .audio_files import find_cover_art, find_folder_cover, list_directory_entries
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +136,13 @@ class AudioPlayerScene(BaseScene):
 
             # Determine display text and color
             if item.is_folder:
-                # Folder: show folder icon with name
-                self.set_tile_image_with_text(row, col, ICON_FOLDER, name_stem, font_size=11, wrap=True)
+                # Folder: folder icon over the dimmed cover of its first track, if any
+                folder_cover = find_folder_cover(item.path)
+                if folder_cover:
+                    self.set_tile_image_with_text(row, col, str(folder_cover), name_stem, font_size=11,
+                                                  wrap=True, dim=0.5, icon_path=ICON_FOLDER)
+                else:
+                    self.set_tile_image_with_text(row, col, ICON_FOLDER, name_stem, font_size=11, wrap=True)
             else:
                 # Audio file: check for cover art
                 cover_art = find_cover_art(item.path)

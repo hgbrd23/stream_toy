@@ -116,3 +116,28 @@ def find_cover_art(audio_file: Path) -> Optional[Path]:
             return cover_path
 
     return None
+
+
+def find_folder_cover(directory: Path) -> Optional[Path]:
+    """
+    Find an image to represent a folder: the cover art of its first audio file.
+
+    Walks the folder depth-first in browser order (sub-folders before files,
+    each sorted by name) and returns the first cover art found, so a series
+    folder shows the cover of its first episode's first track.
+
+    Args:
+        directory: Folder to search
+
+    Returns:
+        Path to the cover art image, or None if no audio file below the folder
+        has one
+    """
+    for entry in list_directory_entries(directory):
+        if entry.is_dir():
+            cover = find_folder_cover(entry)
+        else:
+            cover = find_cover_art(entry)
+        if cover is not None:
+            return cover
+    return None

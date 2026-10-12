@@ -286,6 +286,69 @@ class TestBaseSceneCache(unittest.TestCase):
         self.assertNotEqual(first_path, third_path)
 
 
+class TestImageWithIconOverlay(unittest.TestCase):
+    """set_tile_image_with_text can dim the background and draw an icon over it."""
+
+    def setUp(self):
+        self.temp_cache_dir = Path(tempfile.mkdtemp())
+        self.original_cache_dir = BaseScene.CACHE_DIR
+        BaseScene.CACHE_DIR = self.temp_cache_dir
+        self.runtime = MockRuntime(MockDevice())
+        self.scene = TestScene(self.runtime)
+
+        self.cover = self.temp_cache_dir / "cover.png"
+        Image.new('RGB', (112, 112), (200, 200, 200)).save(self.cover)
+
+        # Opaque icon like the shipped ones: a drawing on a dark, noisy background
+        icon = Image.new('RGB', (64, 64), (20, 30, 45))
+        for x in range(0, 64, 2):
+            icon.putpixel((x, 1), (28, 38, 55))  # background noise
+        icon.paste((230, 190, 50), (16, 16, 48, 48))  # yellow square in the middle
+        self.icon = self.temp_cache_dir / "icon.png"
+        icon.save(self.icon)
+
+    def tearDown(self):
+        BaseScene.CACHE_DIR = self.original_cache_dir
+        shutil.rmtree(self.temp_cache_dir, ignore_errors=True)
+
+    def _rendered(self):
+        path = Path(self.runtime.state_manager.tile_calls[-1]['path'])
+        with Image.open(path) as img:
+            return img.rotate(180).convert('RGB')  # back to display orientation
+
+    def test_dim_halves_brightness(self):
+        self.scene.set_tile_image_with_text(0, 0, str(self.cover), "", dim=0.5)
+        r, g, b = self._rendered().getpixel((10, 10))
+        self.assertTrue(90 <= r <= 110, r)
+
+    def test_icon_background_is_keyed_out(self):
+        self.scene.set_tile_image_with_text(0, 0, str(self.cover), "", icon_path=str(self.icon))
+        img = self._rendered()
+        r, g, b = img.getpixel((5, 5))  # icon background -> cover shows through
+        self.assertGreater(r, 180)
+        r, g, b = img.getpixel((56, 56))  # icon drawing -> yellow
+        self.assertGreater(r, 200)
+        self.assertLess(b, 90)
+
+    def test_icon_with_alpha_channel_is_composited(self):
+        icon = Image.new('RGBA', (112, 112), (0, 0, 0, 0))
+        icon.paste((0, 0, 255, 255), (40, 40, 72, 72))
+        icon_path = self.temp_cache_dir / "alpha.png"
+        icon.save(icon_path)
+
+        self.scene.set_tile_image_with_text(0, 0, str(self.cover), "", icon_path=str(icon_path))
+        img = self._rendered()
+        self.assertGreater(img.getpixel((5, 5))[0], 180)
+        self.assertGreater(img.getpixel((56, 56))[2], 200)
+
+    def test_dim_and_icon_change_the_cache_key(self):
+        self.scene.set_tile_image_with_text(0, 0, str(self.cover), "x")
+        self.scene.set_tile_image_with_text(0, 0, str(self.cover), "x", dim=0.5)
+        self.scene.set_tile_image_with_text(0, 0, str(self.cover), "x", dim=0.5, icon_path=str(self.icon))
+        keys = [c['cache_key'] for c in self.runtime.state_manager.tile_calls]
+        self.assertEqual(len(set(keys)), 3)
+
+
 class TestEmptyCacheFileRecovery(unittest.TestCase):
     """Zero-byte cache files (interrupted writes) must count as cache misses.
 

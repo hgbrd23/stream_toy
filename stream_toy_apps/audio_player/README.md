@@ -5,6 +5,7 @@ A folder-based audio player for StreamToy that lets you browse and play audio fi
 ## Features
 
 - **Multi-level folder navigation**: Browse through nested folders
+- **Folder covers**: A folder tile shows the folder icon over the dimmed cover art of the first track found inside it (depth-first)
 - **Multiple audio format support**: MP3, WAV, FLAC, OGG, M4A
 - **Scrollable file list**: Navigate through large collections
 - **Play/Pause control**: Tap a file to play, tap again to pause/resume

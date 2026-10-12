@@ -8,7 +8,7 @@ input handling, and scene transitions.
 from abc import ABC, abstractmethod
 from typing import Dict, Tuple, Optional, TYPE_CHECKING
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFont
 import asyncio
 import logging
 import os
@@ -446,7 +446,9 @@ class BaseScene(ABC):
         font_size: int = 10,
         fg_color: str = "white",
         bg_opacity: float = 0.7,
-        wrap: bool = True
+        wrap: bool = True,
+        dim: float = 0.0,
+        icon_path: Optional[str] = None
     ) -> None:
         """
         Set a tile to an image with overlayed text.
@@ -460,6 +462,10 @@ class BaseScene(ABC):
             fg_color: Text color
             bg_opacity: Background opacity for text area (0.0-1.0)
             wrap: Auto-wrap text to fit tile width
+            dim: Darken the background image by this fraction (0.0-1.0)
+            icon_path: Optional icon drawn over the background. Icons without
+                an alpha channel are keyed on black (dark pixels become
+                transparent), which suits the shipped tile icons.
         """
         if not os.path.exists(image_path):
             # Fallback to text-only if image not found
@@ -468,6 +474,10 @@ class BaseScene(ABC):
 
         # Generate cache key based on image path and text overlay parameters
         cache_key = f"img_text|{image_path}|{text}|fs{font_size}|fg{fg_color}|op{bg_opacity}|ts{self.device.TILE_SIZE}"
+        if dim:
+            cache_key += f"|dim{dim}"
+        if icon_path:
+            cache_key += f"|icon{icon_path}"
         cache_path = self._get_cache_path(cache_key)
 
         # Thread-safe: check cache and generate inside lock to prevent duplicate work
@@ -479,7 +489,8 @@ class BaseScene(ABC):
                 return
 
             # Generate the composite image (inside lock to prevent concurrent generation)
-            img = self._generate_image_with_text(image_path, text, font_size, fg_color, bg_opacity, wrap)
+            img = self._generate_image_with_text(image_path, text, font_size, fg_color, bg_opacity, wrap,
+                                                 dim=dim, icon_path=icon_path)
             if img is None:
                 # Image generation failed - fall back to text only (outside lock)
                 pass
@@ -502,9 +513,13 @@ class BaseScene(ABC):
         font_size: int,
         fg_color: str,
         bg_opacity: float,
-        wrap: bool
+        wrap: bool,
+        dim: float = 0.0,
+        icon_path: Optional[str] = None
     ) -> Image.Image:
         """Generate composite image with text overlay. Returns None on error."""
+        tile_size = (self.device.TILE_SIZE, self.device.TILE_SIZE)
+
         # Load and process image
         try:
             img = Image.open(image_path)
@@ -513,8 +528,14 @@ class BaseScene(ABC):
             if img.mode != 'RGB':
                 img = img.convert('RGB')
 
-            if img.size != (self.device.TILE_SIZE, self.device.TILE_SIZE):
-                img = img.resize((self.device.TILE_SIZE, self.device.TILE_SIZE), Image.LANCZOS)
+            if img.size != tile_size:
+                img = img.resize(tile_size, Image.LANCZOS)
+
+            if dim:
+                img = ImageEnhance.Brightness(img).enhance(1.0 - dim)
+
+            if icon_path:
+                img = self._overlay_icon(img, icon_path)
 
         except Exception as e:
             logger.error(f"Error loading cover art {image_path}: {e}")
@@ -603,6 +624,39 @@ class BaseScene(ABC):
 
         # Return the generated composite image
         return img
+
+    @staticmethod
+    def _overlay_icon(background: Image.Image, icon_path: str) -> Image.Image:
+        """
+        Draw an icon over a background of the same size.
+
+        Uses the icon's alpha channel when it has one. The shipped tile icons
+        are opaque drawings on a plain (slightly textured) background, so for
+        those the background colour is keyed out, see _keyed_alpha().
+        """
+        with Image.open(icon_path) as icon:
+            icon.load()
+            if icon.size != background.size:
+                icon = icon.resize(background.size, Image.LANCZOS)
+            if icon.mode in ('RGBA', 'LA') or (icon.mode == 'P' and 'transparency' in icon.info):
+                icon = icon.convert('RGBA')
+                alpha = icon.getchannel('A')
+            else:
+                icon = icon.convert('RGB')
+                alpha = BaseScene._keyed_alpha(icon)
+            return Image.composite(icon.convert('RGB'), background, alpha)
+
+    @staticmethod
+    def _keyed_alpha(icon: Image.Image, tolerance: int = 24) -> Image.Image:
+        """
+        Alpha mask for an opaque icon: pixels close to the top-left corner
+        colour become transparent, everything else opaque, with a short ramp
+        in between so anti-aliased edges stay smooth.
+        """
+        key_color = Image.new('RGB', icon.size, icon.getpixel((0, 0)))
+        r, g, b = ImageChops.difference(icon, key_color).split()
+        distance = ImageChops.lighter(ImageChops.lighter(r, g), b)
+        return distance.point(lambda v: 0 if v < tolerance else min(255, (v - tolerance) * 6))
 
     def clear_tile(self, row: int, col: int, color: str = "black") -> None:
         """

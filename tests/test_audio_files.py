@@ -6,6 +6,7 @@ from pathlib import Path
 
 from stream_toy_apps.audio_player.audio_files import (
     find_cover_art,
+    find_folder_cover,
     get_next_audio_file,
     is_audio_file,
     list_audio_files,
@@ -179,6 +180,35 @@ class TestFindCoverArt(AudioFilesTestCase):
     def test_ignores_image_of_other_track(self):
         self.make_files('track.mp3', 'other.png')
         self.assertIsNone(find_cover_art(self.root / 'track.mp3'))
+
+
+class TestFindFolderCover(AudioFilesTestCase):
+    """A folder is represented by the cover of the first track found depth-first."""
+
+    def test_cover_of_first_track_in_folder(self):
+        self.make_files('b.mp3', 'b.jpg', 'a.mp3', 'a.png')
+        self.assertEqual(find_folder_cover(self.root), self.root / 'a.png')
+
+    def test_skips_tracks_without_cover(self):
+        self.make_files('a.mp3', 'b.mp3', 'b.jpg')
+        self.assertEqual(find_folder_cover(self.root), self.root / 'b.jpg')
+
+    def test_sub_folders_are_searched_before_own_files(self):
+        self.make_files('zz.mp3', 'zz.jpg', 'Episode 2/', 'Episode 2/01.mp3', 'Episode 2/01.jpg',
+                        'Episode 1/', 'Episode 1/01.mp3', 'Episode 1/01.jpg')
+        self.assertEqual(find_folder_cover(self.root), self.root / 'Episode 1' / '01.jpg')
+
+    def test_descends_until_a_cover_is_found(self):
+        self.make_files('Series/', 'Series/Season 1/', 'Series/Season 1/01.mp3', 'Series/Season 1/01.jpg')
+        self.assertEqual(find_folder_cover(self.root), self.root / 'Series' / 'Season 1' / '01.jpg')
+
+    def test_none_without_any_cover(self):
+        self.make_files('a.mp3', 'Sub/', 'Sub/b.mp3', 'loose.jpg')
+        self.assertIsNone(find_folder_cover(self.root))
+
+    def test_none_for_missing_folder(self):
+        with self.assertLogs(AUDIO_FILES_LOGGER, level='ERROR'):
+            self.assertIsNone(find_folder_cover(self.root / 'missing'))
 
 
 if __name__ == '__main__':
