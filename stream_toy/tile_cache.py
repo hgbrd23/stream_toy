@@ -13,6 +13,12 @@ Deriving these on every draw costs about a quarter of a second per icon on the
 Pi Zero 2 W, so they are cached in ``data/cache/button_tiles``. ``data`` is
 excluded from the deploy rsync, so the cache survives updates. Cache files are
 keyed by the source path and refreshed when the source is newer.
+
+Tiles rendered in memory by scenes (text, solid colours, cover + title
+composites) are stored once, directly as the device JPEG via
+``save_native_key_jpeg``. Such a file is recognised by its ``_native.jpg``
+suffix: the device sends it as-is and the browser PNG is derived from it by
+rotating back, so a new text tile costs one encode and one SD write.
 """
 
 import hashlib
@@ -34,6 +40,9 @@ ROTATION = 180
 # Quality 85 is mandatory for key tiles (CLAUDE.md). Backgrounds keep PIL's
 # default (75), which is what the SDK's own set_touchscreen_image produces.
 KEY_JPEG_QUALITY = 85
+
+# Suffix of a file that already is a device-ready key tile (rotated JPEG)
+NATIVE_SUFFIX = '_native.jpg'
 
 
 def cache_path_for(source: Union[str, Path], suffix: str) -> Path:
@@ -77,6 +86,23 @@ def to_native_format(image: Image.Image, size: Tuple[int, int]) -> Image.Image:
     return image.convert('RGB')
 
 
+def is_native_key_jpeg(path: Union[str, Path]) -> bool:
+    """True if the file was written by save_native_key_jpeg (or native_key_jpeg)."""
+    return Path(path).name.endswith(NATIVE_SUFFIX)
+
+
+def save_native_key_jpeg(image: Image.Image, cache_path: Path) -> None:
+    """
+    Store an in-memory tile (display orientation) as a device-ready key JPEG.
+
+    ``cache_path`` must end in NATIVE_SUFFIX so the devices recognise it.
+    """
+    if not is_native_key_jpeg(cache_path):
+        raise ValueError(f"Native tile cache files must end in {NATIVE_SUFFIX}: {cache_path.name}")
+    atomic_save(to_native_format(image, TILE_SIZE), cache_path,
+                format='JPEG', quality=KEY_JPEG_QUALITY)
+
+
 def _derive(source: Union[str, Path], suffix: str, convert, **save_kwargs) -> Path:
     source = Path(source)
     cache_path = cache_path_for(source, suffix)
@@ -92,8 +118,11 @@ def _derive(source: Union[str, Path], suffix: str, convert, **save_kwargs) -> Pa
 
 
 def native_key_jpeg(source: Union[str, Path]) -> Path:
-    """Device-ready 112x112 JPEG for a key tile (cached)."""
-    return _derive(source, '_native.jpg',
+    """Device-ready 112x112 JPEG for a key tile: the source itself if it already is one, else cached."""
+    source = Path(source)
+    if is_native_key_jpeg(source):
+        return source
+    return _derive(source, NATIVE_SUFFIX,
                    lambda img: to_native_format(img, TILE_SIZE),
                    format='JPEG', quality=KEY_JPEG_QUALITY)
 
@@ -116,14 +145,24 @@ def _is_tile_sized_png(source: Path) -> bool:
         return False
 
 
+def _to_web_format(image: Image.Image, rotate_back: bool) -> Image.Image:
+    image = image.convert('RGB')
+    if rotate_back:
+        # Native tiles are stored rotated for the device; undo that for the browser
+        image = image.rotate(ROTATION)
+    if image.size != TILE_SIZE:
+        image = image.resize(TILE_SIZE, Image.LANCZOS)
+    return image
+
+
 def web_png(source: Union[str, Path]) -> Path:
     """112x112 PNG for the browser: the source itself when it already is one, else cached."""
     source = Path(source)
     if _is_tile_sized_png(source):
         return source
+    rotate_back = is_native_key_jpeg(source)
     return _derive(source, '_web.png',
-                   lambda img: img.convert('RGB').resize(TILE_SIZE, Image.LANCZOS)
-                   if img.size != TILE_SIZE else img.convert('RGB'),
+                   lambda img: _to_web_format(img, rotate_back),
                    format='PNG')
 
 
@@ -136,7 +175,7 @@ def prewarm(sources, native: bool = True, web: bool = True) -> int:
             continue
         try:
             for enabled, derive, suffix in (
-                (native, native_key_jpeg, '_native.jpg'),
+                (native, native_key_jpeg, NATIVE_SUFFIX),
                 (web, web_png, '_web.png'),
             ):
                 if enabled and not is_fresh(cache_path_for(source, suffix), source):

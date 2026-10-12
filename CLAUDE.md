@@ -53,8 +53,9 @@ The StreamDock 293V3 requires button images to be in JPEG format (112x112 pixels
   - Multiple color gradients
 
 **Why This Matters:**
-- PNG cache files in `data/cache/scene_tiles/` display correctly in web emulator
-- Native JPEG cache files (`*_native.jpg`) are generated on-demand for hardware
+- Tiles rendered by scenes (text, colours, composites) are stored directly as device-ready `*_native.jpg` files in
+  `data/cache/scene_tiles/`; icons and cover art get their `*_native.jpg` in `data/cache/button_tiles/` on demand
+  (`stream_toy/tile_cache.py`). The web emulator derives its PNGs from these files.
 - If JPEG quality is too high, images display corrupted ONLY on hardware device (not in emulator or on PC)
 
 **Implementation:**

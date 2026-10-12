@@ -119,8 +119,8 @@ class TestBaseSceneCache(unittest.TestCase):
         # Should be in temp cache dir
         self.assertEqual(cache_path.parent, self.temp_cache_dir)
 
-        # Should end with .png
-        self.assertTrue(cache_path.name.endswith('.png'))
+        # Should be marked as a device-ready tile
+        self.assertTrue(cache_path.name.endswith('_native.jpg'))
 
         # Should contain sanitized prefix
         self.assertTrue(cache_path.name.startswith('test_Hello_fs24_fgwhite_bg'))
@@ -145,9 +145,46 @@ class TestBaseSceneCache(unittest.TestCase):
         # Verify it's cached
         self.assertTrue(self.scene._is_cached(cache_key))
 
-        # Verify image can be loaded back
-        loaded_img = Image.open(cache_path)
-        self.assertEqual(loaded_img.size, (112, 112))
+        # Verify it is a device-ready JPEG
+        with Image.open(cache_path) as loaded_img:
+            self.assertEqual(loaded_img.format, 'JPEG')
+            self.assertEqual(loaded_img.size, (112, 112))
+
+    def test_cached_tile_is_rotated_for_the_device(self):
+        """Rendered tiles are stored rotated by 180 degrees, ready for the hardware."""
+        img = Image.new('RGB', (112, 112), 'black')
+        img.paste((255, 0, 0), (0, 0, 20, 20))  # red top-left corner
+
+        cache_path = self.scene._cache_image("test|rotated", img)
+
+        with Image.open(cache_path) as out:
+            r, g, b = out.getpixel((105, 105))
+            self.assertGreater(r, 200)
+            self.assertLess(g, 60)
+            r, g, b = out.getpixel((5, 5))
+            self.assertLess(r, 60)
+
+    def test_devices_use_cached_tile_without_a_second_file(self):
+        """The hardware sends the cached file as-is; the browser gets a rotated-back PNG."""
+        from unittest import mock
+        from stream_toy import tile_cache
+
+        img = Image.new('RGB', (112, 112), 'black')
+        img.paste((255, 0, 0), (0, 0, 20, 20))
+        cache_path = self.scene._cache_image("test|devices", img)
+
+        with mock.patch.object(tile_cache, 'CACHE_DIR', self.temp_cache_dir / 'button_tiles'):
+            self.assertEqual(tile_cache.native_key_jpeg(cache_path), cache_path)
+            self.assertFalse((self.temp_cache_dir / 'button_tiles').exists())
+
+            web_path = tile_cache.web_png(cache_path)
+
+        self.assertNotEqual(web_path, cache_path)
+        with Image.open(web_path) as out:
+            self.assertEqual(out.format, 'PNG')
+            self.assertEqual(out.size, (112, 112))
+            r, g, b = out.getpixel((5, 5))  # back in display orientation
+            self.assertGreater(r, 200)
 
     def test_cache_image_idempotent(self):
         """Test caching same image twice doesn't recreate file."""

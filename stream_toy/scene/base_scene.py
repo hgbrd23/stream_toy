@@ -14,8 +14,9 @@ import logging
 import os
 import hashlib
 import threading
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
+
+from stream_toy import tile_cache
 
 if TYPE_CHECKING:
     from ..runtime import StreamToyRuntime
@@ -41,7 +42,8 @@ class BaseScene(ABC):
     such as menus, games, or settings screens.
     """
 
-    # Cache directory for generated tile images
+    # Cache directory for tiles rendered in memory (text, colours, composites).
+    # They are stored as device-ready JPEGs (see tile_cache.save_native_key_jpeg).
     CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "scene_tiles"
 
     def __init__(self, runtime: 'StreamToyRuntime'):
@@ -111,8 +113,8 @@ class BaseScene(ABC):
         # Hash complete cache key for uniqueness
         key_hash = hashlib.md5(cache_key.encode('utf-8')).hexdigest()[:12]
 
-        # Combine: prefix + hash
-        filename = f"{prefix}_{key_hash}.png"
+        # Combine: prefix + hash; the suffix marks the file as device-ready
+        filename = f"{prefix}_{key_hash}{tile_cache.NATIVE_SUFFIX}"
         return self.CACHE_DIR / filename
 
     @staticmethod
@@ -142,90 +144,47 @@ class BaseScene(ABC):
 
     def _cache_image(self, cache_key: str, image: Image.Image) -> Path:
         """
-        Save a PIL Image to the file cache using atomic writes.
+        Save a rendered tile to the file cache as a device-ready JPEG.
 
-        Thread-safe implementation prevents race conditions where multiple
-        threads try to write the same cache file simultaneously.
+        Thread-safe: the lock prevents two threads from writing the same cache
+        file at the same time.
 
         Args:
             cache_key: Unique identifier for the image
-            image: PIL Image to cache
+            image: PIL Image to cache (display orientation)
 
         Returns:
             Path to the cached file
         """
         cache_path = self._get_cache_path(cache_key)
 
-        # Thread-safe check and write with lock
         with _CACHE_LOCK:
             # Double-check if file exists (another thread might have created it)
             if self._is_valid_cache_file(cache_path):
                 logger.debug(f"Cache already exists: {cache_path.name}")
                 return cache_path
-
-            # Atomic write: write to temp file, then rename
-            tmp_path = None
-            try:
-                import uuid
-                tmp_filename = f".tmp_{uuid.uuid4().hex[:8]}_{cache_path.name}"
-                tmp_path = cache_path.parent / tmp_filename
-
-                # Convert to RGB if needed
-                if image.mode != 'RGB':
-                    image = image.convert('RGB')
-
-                # Save and atomically rename
-                image.save(tmp_path, format='PNG', optimize=False)
-                tmp_path.rename(cache_path)
-                logger.debug(f"Cached image to: {cache_path.name}")
-
-            except Exception as e:
-                logger.error(f"Error caching image {cache_path.name}: {e}")
-                if tmp_path and tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except Exception:
-                        pass
-                raise
+            self._cache_image_locked(cache_key, image, cache_path)
 
         return cache_path
 
     def _cache_image_locked(self, cache_key: str, image: Image.Image, cache_path: Path) -> None:
         """
-        Save PIL Image to cache. Must be called while holding _CACHE_LOCK.
+        Save a rendered tile to cache. Must be called while holding _CACHE_LOCK.
+
+        The image is rotated and JPEG-encoded once, straight from memory, so
+        the hardware device can send the file as-is and the web device only
+        has to rotate it back for the browser.
 
         Args:
             cache_key: Unique identifier for logging
-            image: PIL Image to cache
+            image: PIL Image to cache (display orientation)
             cache_path: Pre-computed cache path
         """
-        # Atomic write: write to temp file, then rename
-        tmp_path = None
         try:
-            # Generate unique temp filename
-            import uuid
-            tmp_filename = f".tmp_{uuid.uuid4().hex[:8]}_{cache_path.name}"
-            tmp_path = cache_path.parent / tmp_filename
-
-            # Convert image to RGB if needed (ensure consistent format)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            # Save to temp file
-            image.save(tmp_path, format='PNG', optimize=False)
-
-            # Atomic rename
-            tmp_path.rename(cache_path)
+            tile_cache.save_native_key_jpeg(image, cache_path)
             logger.debug(f"Cached image to: {cache_path.name}")
-
         except Exception as e:
             logger.error(f"Error caching image {cache_path.name}: {e}", exc_info=True)
-            # Clean up temp file
-            if tmp_path and tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
             raise
 
     def _get_font(self, font_size: int) -> ImageFont.FreeTypeFont:

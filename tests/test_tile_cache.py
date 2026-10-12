@@ -136,6 +136,54 @@ class TestTileCache(unittest.TestCase):
         with Image.open(path) as out:
             self.assertEqual(out.size, (112, 112))
 
+    def test_save_native_key_jpeg_writes_rotated_q85_jpeg(self):
+        img = Image.new('RGB', (112, 112), (0, 0, 0))
+        img.paste((0, 0, 255), (0, 0, 20, 20))  # top-left blue
+        target = self.cache_dir / 'text_abc_native.jpg'
+
+        tile_cache.save_native_key_jpeg(img, target)
+
+        with Image.open(target) as out:
+            self.assertEqual(out.format, 'JPEG')
+            self.assertEqual(out.size, (112, 112))
+            r, g, b = out.getpixel((105, 105))
+            self.assertGreater(b, 150)
+        self.assertEqual([], [p for p in self.cache_dir.iterdir() if p.name.startswith('.tmp_')])
+        # Quality 85 is mandatory (CLAUDE.md): re-encoding at 85 reproduces the file size closely
+        with Image.open(target) as out:
+            out.load()
+            from io import BytesIO
+            buf = BytesIO()
+            out.save(buf, format='JPEG', quality=tile_cache.KEY_JPEG_QUALITY)
+        self.assertLess(abs(len(buf.getvalue()) - target.stat().st_size) / target.stat().st_size, 0.15)
+
+    def test_save_native_key_jpeg_rejects_wrong_suffix(self):
+        with self.assertRaises(ValueError):
+            tile_cache.save_native_key_jpeg(Image.new('RGB', (112, 112)), self.cache_dir / 'tile.jpg')
+
+    def test_native_key_jpeg_returns_native_source_unchanged(self):
+        source = self.tmp / 'text_abc_native.jpg'
+        tile_cache.save_native_key_jpeg(Image.new('RGB', (112, 112), (9, 9, 9)), source)
+
+        self.assertEqual(tile_cache.native_key_jpeg(source), source)
+        self.assertEqual([], list(self.cache_dir.glob('*_native.jpg')))
+
+    def test_web_png_rotates_native_source_back(self):
+        img = Image.new('RGB', (112, 112), (0, 0, 0))
+        img.paste((0, 0, 255), (0, 0, 20, 20))
+        source = self.tmp / 'text_abc_native.jpg'
+        tile_cache.save_native_key_jpeg(img, source)
+
+        path = tile_cache.web_png(source)
+
+        self.assertTrue(path.name.endswith('_web.png'))
+        with Image.open(path) as out:
+            self.assertEqual(out.size, (112, 112))
+            r, g, b = out.getpixel((5, 5))
+            self.assertGreater(b, 150)
+            r, g, b = out.getpixel((105, 105))
+            self.assertLess(b, 60)
+
     def test_prewarm_generates_missing_and_skips_fresh(self):
         a = self._png('a.png')
         b = self._png('b.png')

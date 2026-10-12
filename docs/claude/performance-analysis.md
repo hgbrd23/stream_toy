@@ -145,9 +145,26 @@ Keep: ACK waits for background images, quality 85 for every native JPEG.
   are serialised through a transport lock held through the background ACK
   wait; the tile dedup state is reset after a background image; per-event
   INFO logs demoted to DEBUG.
-* Still open: the 1 s ACK wait at init (see measurement below), the
-  stale-ACK race for background images, text tiles still go through the
-  PNG cache before the native JPEG is produced.
+* Tiles rendered in memory (text, solid colours, cover + title composites,
+  SVGs) are written once as the device JPEG (`*_native.jpg` in
+  `data/cache/scene_tiles`, `tile_cache.save_native_key_jpeg`). The hardware
+  device sends that file as-is; the web device derives its browser PNG from it
+  by rotating back, and only when a tile is actually flushed. A new player
+  clock tile now costs one JPEG encode and one SD write instead of a PNG
+  encode, write, decode, JPEG encode and a second write.
+* Still open: the 1 s wait at init (see measurement below) and the stale-ACK
+  race for background images.
+
+### Why not send tiles from RAM instead of files?
+
+The device is on USB high speed (480 Mbit/s, interrupt OUT endpoint 1024
+bytes, bInterval 1, checked with `lsusb -t`/`lsusb -v` on the Pi), so the cable
+and bus speed are not the limit. `setKeyImgDualDevice` costs one stat, open and
+read from the page cache per tile (well under a millisecond) and then 3-7
+synchronous 1 KB `hid_write` calls, which dominate. Sending from memory would
+need the `TranSport_write` path with the BAT header built in Python
+(reimplementing library logic); it would save the SD write for one-off tiles
+but not make a draw noticeably faster.
 
 ## Measured on the device (2026-10-12, first start after deploy, cold cache)
 
