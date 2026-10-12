@@ -9,6 +9,7 @@ import asyncio
 from pathlib import Path
 from typing import List, Optional, Type
 import logging
+import shutil
 import subprocess
 import sys
 import threading
@@ -78,24 +79,7 @@ class StreamToyRuntime:
         """
         logger.info("Initializing StreamToy Runtime")
         logger.info(f"Hardware enabled: {self.enable_hardware}, Web enabled: {self.enable_web}")
-
-        # Initialize central LED manager
-        if self.enable_hardware:
-            # Use real hardware GPIO pin
-            try:
-                import board
-                self.state_manager.initialize_led_manager(pin=board.D10, num_leds=90, brightness=0.1)
-                logger.info("Central LED manager initialized with hardware GPIO")
-            except Exception as e:
-                logger.warning(f"Failed to initialize LED hardware, using fake mode: {e}")
-                self.state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.1)
-        else:
-            # Use fake mode for web-only
-            self.state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.5)
-            logger.info("Central LED manager initialized in fake mode")
-
-        # Set default LED animation
-        self._set_default_led_animation()
+        start_time = time.monotonic()
 
         # Initialize hardware device first so the splashscreen appears as early as possible
         hw_device: Optional[StreamDock293V3Device] = None
@@ -111,15 +95,15 @@ class StreamToyRuntime:
                 self.state_manager.register_viewer(hw_device._on_state_tile_update, device=hw_device)
 
                 self.devices.append(hw_device)
-                logger.info("Hardware device initialized successfully")
+                logger.info(f"Hardware device initialized successfully ({time.monotonic() - start_time:.2f}s)")
             except Exception as e:
                 logger.error(f"Failed to initialize hardware device: {e}", exc_info=True)
                 hw_device = None
                 if not self.enable_web:
                     raise RuntimeError(f"Hardware initialization failed and web disabled: {e}")
 
-        # Hardware-independent init (sound backend, web emulator, module manifests)
-        # runs in the background while the splashscreen is shown
+        # Hardware-independent init (sound backend, web emulator, module manifests,
+        # tile cache warmup) runs in the background while the splashscreen is shown
         background: dict = {}
 
         def _background_init() -> None:
@@ -139,15 +123,36 @@ class StreamToyRuntime:
                     background['web_error'] = e
 
             self.load_modules()
+            self._prewarm_tile_cache()
 
         background_thread = threading.Thread(target=_background_init, name="background-init", daemon=True)
         background_thread.start()
+
+        # Initialize central LED manager (imports board/neopixel and starts the
+        # LED thread; done after the device so it does not delay the splash)
+        if self.enable_hardware:
+            # Use real hardware GPIO pin
+            try:
+                import board
+                self.state_manager.initialize_led_manager(pin=board.D10, num_leds=90, brightness=0.1)
+                logger.info("Central LED manager initialized with hardware GPIO")
+            except Exception as e:
+                logger.warning(f"Failed to initialize LED hardware, using fake mode: {e}")
+                self.state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.1)
+        else:
+            # Use fake mode for web-only
+            self.state_manager.initialize_led_manager(pin=None, num_leds=90, brightness=0.5)
+            logger.info("Central LED manager initialized in fake mode")
+
+        # Set default LED animation
+        self._set_default_led_animation()
 
         # Show splashscreen while background init runs
         if hw_device:
             self._show_splashscreen(hw_device)
 
         background_thread.join()
+        logger.info(f"Background init finished ({time.monotonic() - start_time:.2f}s after start)")
 
         # Wire up shared sound manager and web device
         self.sound_manager = background.get('sound')
@@ -177,10 +182,10 @@ class StreamToyRuntime:
         self.device = self.devices[0]
         logger.info(f"Primary device: {type(self.device).__name__}")
 
-        # Auto-update yt-dlp in the background (non-blocking)
+        # Auto-update yt-dlp in the background (non-blocking, delayed)
         self._update_ytdlp_background()
 
-        logger.info("StreamToy Runtime initialized successfully")
+        logger.info(f"StreamToy Runtime initialized successfully ({time.monotonic() - start_time:.2f}s)")
 
     def _show_splashscreen(self, hw_device: StreamDock293V3Device) -> None:
         """
@@ -237,22 +242,28 @@ class StreamToyRuntime:
         else:
             logger.warning("Failed to clear screen to black")
 
-    @staticmethod
-    def _update_ytdlp_background() -> None:
-        """Update yt-dlp in the background without delaying startup."""
+    # pip on the Pi Zero 2 W needs 10-30 s of CPU; keep it away from the first
+    # menu render and the first interactions
+    YTDLP_UPDATE_DELAY = 180.0
+
+    def _update_ytdlp_background(self) -> None:
+        """Update yt-dlp in the background, delayed and at low priority."""
         def _do_update():
             try:
                 venv_pip = Path(sys.executable).parent / 'pip'
                 if not venv_pip.is_file():
                     logger.debug("pip not found in current venv, skipping yt-dlp update")
                     return
+                time.sleep(self.YTDLP_UPDATE_DELAY)
+                if not self._running:
+                    return
                 # '[default]' keeps the pinned yt-dlp-ejs challenge solver in sync;
                 # a bare yt-dlp upgrade leaves it stale, which breaks YouTube extraction
                 # ("This video is not available") even when deno is installed.
-                result = subprocess.run(
-                    [str(venv_pip), 'install', '--upgrade', 'yt-dlp[default]'],
-                    capture_output=True, text=True, timeout=300,
-                )
+                cmd = [str(venv_pip), 'install', '--upgrade', 'yt-dlp[default]']
+                if shutil.which('nice'):
+                    cmd = ['nice', '-n', '19'] + cmd
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
                 if result.returncode == 0:
                     logger.info("yt-dlp auto-update completed successfully")
                 else:
@@ -262,6 +273,27 @@ class StreamToyRuntime:
 
         thread = threading.Thread(target=_do_update, daemon=True, name="ytdlp-update")
         thread.start()
+
+    def _prewarm_tile_cache(self) -> None:
+        """
+        Generate device/browser images for the shipped icons and module icons.
+
+        Runs in the background during the splash so the first menu render does
+        not pay for decoding 1024x1024 PNGs. Only missing or outdated cache
+        files are generated, so this is a no-op on most boots.
+        """
+        from . import tile_cache
+
+        started = time.monotonic()
+        sources = sorted((Path(__file__).parent.parent / "assets" / "tiles").glob("*.png"))
+        for module in self.modules:
+            try:
+                sources.append(module.get_icon_path())
+            except FileNotFoundError:
+                pass
+        generated = tile_cache.prewarm(sources, native=self.enable_hardware, web=self.enable_web)
+        if generated:
+            logger.info(f"Tile cache warmup: {generated} file(s) generated in {time.monotonic() - started:.1f}s")
 
     def load_modules(self) -> None:
         """Scan and load all modules from stream_toy_apps/."""
@@ -483,8 +515,8 @@ class StreamToyRuntime:
         # Stop running
         self._running = False
 
-        # Stop central LED manager
-        self.state_manager.stop_led_manager()
+        # Flush pending tiles, stop the display worker and the LED manager
+        self.state_manager.shutdown()
 
         # Shut down the shared sound manager once, before closing devices
         if self.sound_manager:

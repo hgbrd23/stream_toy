@@ -7,14 +7,13 @@ using Flask and Socket.IO for real-time updates.
 
 import threading
 import base64
-from io import BytesIO
 from pathlib import Path
-from typing import Optional, Dict, Tuple, Union
-from PIL import Image
+from typing import Optional, Dict, Tuple
 import logging
 import time
 
 from .stream_toy_device import StreamToyDevice
+from .. import tile_cache
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +38,14 @@ class WebDevice(StreamToyDevice):
         self.port = port
         self._server_thread: Optional[threading.Thread] = None
 
-        # Persistent tile cache for reconnecting clients (stores Images)
-        self._tile_cache: Dict[Tuple[int, int], Image.Image] = {}
+        # What the browser shows: (row, col) -> base64 PNG, resent to
+        # reconnecting clients without re-encoding
+        self._tile_cache: Dict[Tuple[int, int], str] = {}
+        # (row, col) -> cache_key of the tile in _tile_cache, for dedup
+        self._shown_keys: Dict[Tuple[int, int], str] = {}
+        # Guards _tile_cache/_shown_keys: written by the display worker,
+        # read by the server thread on client connect
+        self._tile_cache_lock = threading.Lock()
 
         # LED update thread
         self._led_update_running = False
@@ -122,6 +127,11 @@ class WebDevice(StreamToyDevice):
 
         while self._led_update_running:
             try:
+                if not server.has_clients():
+                    # Nobody is watching, don't build or push LED frames
+                    time.sleep(0.25)
+                    continue
+
                 # Get current LED colors from central LED manager
                 if self.state_manager and self.state_manager.led_manager:
                     led_data = self.state_manager.led_manager.get_pixel_data()
@@ -155,89 +165,44 @@ class WebDevice(StreamToyDevice):
 
         self._initialized = False
 
-    def set_tile(
-        self,
-        row: int,
-        col: int,
-        image_path: Union[str, Path],
-        cache_key: Optional[str] = None
-    ) -> None:
+    def flush_tiles(self, tiles: Dict[Tuple[int, int], Tuple[Path, str]]) -> None:
         """
-        Queue a tile image update.
+        Send a batch of tile updates to the browser.
 
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            image_path: Path to image file (str/Path)
-            cache_key: Optional cache key (ignored by web device)
-
-        Raises:
-            ValueError: If row/col out of range
-            FileNotFoundError: If image_path doesn't exist
+        Tiles whose non-empty cache_key matches what the browser already shows
+        are skipped. The PNG comes from tile_cache (already 112x112), so it is
+        only read and base64-encoded. Without a connected client the cache is
+        still updated so the next client gets the current screen.
         """
-        self.validate_tile_coords(row, col)
-
-        # Convert to Path
-        image_path = Path(image_path)
-
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image file not found: {image_path}")
-
-        # Queue the image path (cache_key ignored by web device)
-        self._tile_queue[(row, col)] = (image_path, cache_key or "")
-
-    def submit_tiles(self) -> None:
-        """Flush queued tile updates to browser."""
-        if not self._tile_queue:
-            logger.debug("No tiles to submit")
-            return
-
         from ..web import server
 
-        logger.info(f"[SUBMIT] Preparing to send {len(self._tile_queue)} tile updates to browser")
+        sent = 0
 
-        for (row, col), (image_path, cache_key) in self._tile_queue.items():
-            # Load image from file path
-            image = Image.open(image_path)
-            logger.debug(f"[SUBMIT] Loaded image from path: {image_path}")
+        for (row, col), (image_path, cache_key) in tiles.items():
+            with self._tile_cache_lock:
+                if cache_key and self._shown_keys.get((row, col)) == cache_key:
+                    continue
 
-            # Resize if needed
-            if image.size != (self.TILE_SIZE, self.TILE_SIZE):
-                image = image.resize((self.TILE_SIZE, self.TILE_SIZE), Image.LANCZOS)
+            try:
+                png_path = tile_cache.web_png(image_path)
+                img_base64 = base64.b64encode(png_path.read_bytes()).decode('ascii')
+            except Exception as e:
+                logger.error(f"[SUBMIT] Could not prepare tile ({row},{col}) from {image_path}: {e}",
+                             exc_info=True)
+                continue
 
-            # Convert image to base64 PNG
-            buffered = BytesIO()
-            image.save(buffered, format="PNG")
-            img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+            with self._tile_cache_lock:
+                self._tile_cache[(row, col)] = img_base64
+                self._shown_keys[(row, col)] = cache_key
 
-            logger.debug(f"[SUBMIT] Converted tile ({row},{col}) to base64, size={len(img_base64)} bytes")
+            # Checked after storing: a client connecting meanwhile either gets
+            # this tile from on_client_connected() or from this emit
+            if server.has_clients():
+                server.emit_tile_update(row, col, img_base64)
+                sent += 1
 
-            # Send to browser
-            server.emit_tile_update(row, col, img_base64)
-
-            # Update cache for reconnecting clients
-            self._tile_cache[(row, col)] = image.copy()
-
-        # Clear queue
-        self._tile_queue.clear()
-
-        logger.info(f"[SUBMIT] All tiles submitted successfully, cache now has {len(self._tile_cache)} tiles")
-
-        # Small delay to simulate device behavior
-        time.sleep(0.1)
-
-    def _on_state_tile_update(self, row: int, col: int, image_path: Union[str, Path], cache_key: str) -> None:
-        """
-        Callback from central state manager when a tile is updated.
-
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            image_path: Path to image file
-            cache_key: Cache key for tracking
-        """
-        # Queue the tile update locally
-        self.set_tile(row, col, image_path, cache_key)
+        logger.debug(f"[SUBMIT] {len(tiles)} tiles flushed, {sent} sent to browser, "
+                     f"cache has {len(self._tile_cache)} tiles")
 
     def _on_button_event(self, row: int, col: int, is_pressed: bool) -> None:
         """
@@ -258,22 +223,13 @@ class WebDevice(StreamToyDevice):
             logger.warning(f"[BUTTON EVENT] No key callback registered for button ({row},{col})")
 
     def on_client_connected(self) -> None:
-        """Called when a client connects to the web interface."""
-        logger.info(f"[CLIENT CONNECT] Client connected, sending current state ({len(self._tile_cache)} tiles in cache)")
-
-        # Resend all tiles
+        """Called when a client connects to the web interface: resend the current screen."""
         from ..web import server
 
-        if len(self._tile_cache) == 0:
-            logger.warning("[CLIENT CONNECT] Tile cache is empty, no tiles to send to client")
-        else:
-            logger.info(f"[CLIENT CONNECT] Sending {len(self._tile_cache)} cached tiles to new client")
+        with self._tile_cache_lock:
+            cached = list(self._tile_cache.items())
 
-        for (row, col), image in self._tile_cache.items():
-            buffered = BytesIO()
-            image.save(buffered, format="PNG")
-            img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        logger.info(f"[CLIENT CONNECT] Client connected, sending {len(cached)} cached tiles")
+
+        for (row, col), img_base64 in cached:
             server.emit_tile_update(row, col, img_base64)
-            logger.debug(f"[CLIENT CONNECT] Sent cached tile ({row},{col}) to client, size={len(img_base64)} bytes")
-
-        logger.info(f"[CLIENT CONNECT] Finished sending {len(self._tile_cache)} tiles to new client")

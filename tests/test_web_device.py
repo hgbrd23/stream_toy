@@ -14,7 +14,9 @@ import random
 import tempfile
 import shutil
 from pathlib import Path
+from unittest import mock
 
+from stream_toy import tile_cache
 from stream_toy.device.web_device import WebDevice
 from stream_toy.web import server
 
@@ -30,6 +32,11 @@ class TestWebDevice(unittest.TestCase):
 
         # Create temporary directory for test images
         self.temp_dir = Path(tempfile.mkdtemp())
+
+        # Keep derived tile PNGs out of the real data/cache directory
+        cache_dir_patcher = mock.patch.object(tile_cache, 'CACHE_DIR', self.temp_dir / 'cache')
+        cache_dir_patcher.start()
+        self.addCleanup(cache_dir_patcher.stop)
 
         # Track received events
         self.received_tile_updates = []
@@ -131,19 +138,115 @@ class TestWebDevice(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.device.set_tile(-1, 0, test_image_path)
 
+    @staticmethod
+    def _decode(img_base64):
+        """Decode a cached base64 PNG into a PIL image."""
+        return Image.open(BytesIO(base64.b64decode(img_base64)))
+
     def test_tile_image_resizing(self):
-        """Test images are resized to tile size."""
+        """Test oversized sources are sent as a 112x112 PNG from the tile cache."""
         self.device = WebDevice(host='127.0.0.1', port=self.test_port)
 
-        # Create oversized image
-        large_image_path = self._create_test_image('green', size=(256, 256))
+        # Shipped icons are 1024x1024
+        large_image_path = self._create_test_image('green', size=(1024, 1024))
 
         self.device.set_tile(0, 0, large_image_path)
         self.device.submit()
 
-        # Verify image in cache is resized to tile size
-        cached_image = self.device._tile_cache[(0, 0)]
+        cached_image = self._decode(self.device._tile_cache[(0, 0)])
+        self.assertEqual(cached_image.format, 'PNG')
         self.assertEqual(cached_image.size, (112, 112))
+
+        # The resized PNG was written to the (temporary) tile cache
+        cached_files = list((self.temp_dir / 'cache').glob('*_web.png'))
+        self.assertEqual(len(cached_files), 1)
+        with Image.open(cached_files[0]) as img:
+            self.assertEqual(img.size, (112, 112))
+
+    def test_tile_sized_png_sent_unchanged(self):
+        """Test a 112x112 PNG source is sent as-is without a cache file."""
+        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        path = self._create_test_image('red')
+
+        self.device.set_tile(0, 0, path)
+        self.device.submit()
+
+        self.assertEqual(base64.b64decode(self.device._tile_cache[(0, 0)]), path.read_bytes())
+        self.assertFalse((self.temp_dir / 'cache').exists())
+
+    def test_same_cache_key_is_sent_once(self):
+        """Test tiles with an unchanged cache_key are not resent."""
+        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        path = self._create_test_image('red')
+
+        with mock.patch.object(server, 'has_clients', return_value=True), \
+                mock.patch('stream_toy.web.server.emit_tile_update') as emit:
+            self.device.set_tile(0, 0, path, cache_key='icon_a')
+            self.device.submit()
+            self.device.set_tile(0, 0, path, cache_key='icon_a')
+            self.device.submit()
+            self.assertEqual(emit.call_count, 1)
+
+            # A different key at the same position is sent again
+            self.device.set_tile(0, 0, path, cache_key='icon_b')
+            self.device.submit()
+            self.assertEqual(emit.call_count, 2)
+
+    def test_empty_cache_key_always_sent(self):
+        """Test tiles without a cache_key are sent on every submit."""
+        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        path = self._create_test_image('red')
+
+        with mock.patch.object(server, 'has_clients', return_value=True), \
+                mock.patch('stream_toy.web.server.emit_tile_update') as emit:
+            for _ in range(3):
+                self.device.set_tile(1, 1, path)
+                self.device.submit()
+            self.assertEqual(emit.call_count, 3)
+
+    def test_no_emit_without_clients(self):
+        """Test tiles are cached but not emitted while no browser is connected."""
+        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        path = self._create_test_image('red')
+
+        with mock.patch.object(server, 'has_clients', return_value=False), \
+                mock.patch('stream_toy.web.server.emit_tile_update') as emit:
+            self.device.set_tile(2, 4, path, cache_key='icon_a')
+            self.device.submit()
+            emit.assert_not_called()
+
+        self.assertIn((2, 4), self.device._tile_cache)
+        self.assertEqual(self.device._shown_keys[(2, 4)], 'icon_a')
+
+    def test_on_client_connected_resends_cached_strings(self):
+        """Test a connecting client gets the cached base64 strings unchanged."""
+        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+
+        with mock.patch.object(server, 'has_clients', return_value=False):
+            self.device.set_tile(0, 1, self._create_test_image('red'), cache_key='a')
+            self.device.set_tile(1, 2, self._create_test_image('blue'), cache_key='b')
+            self.device.submit()
+
+        with mock.patch('stream_toy.web.server.emit_tile_update') as emit:
+            self.device.on_client_connected()
+
+        sent = {(c.args[0], c.args[1]): c.args[2] for c in emit.call_args_list}
+        self.assertEqual(sent, self.device._tile_cache)
+        self.assertEqual(len(sent), 2)
+
+    def test_has_clients_tracks_connections(self):
+        """Test server counts connected Socket.IO clients."""
+        self.device = WebDevice(host='127.0.0.1', port=self.test_port)
+        server.set_web_device(self.device)
+        app_client = server.app.test_client()
+
+        self.assertFalse(server.has_clients())
+        client = server.socketio.test_client(server.app, flask_test_client=app_client)
+        try:
+            self.assertTrue(server.has_clients())
+        finally:
+            client.disconnect()
+        self.assertFalse(server.has_clients())
 
     def test_button_callback_registration(self):
         """Test button callback can be registered."""

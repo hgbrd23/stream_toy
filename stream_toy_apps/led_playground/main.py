@@ -103,7 +103,7 @@ class LEDPlaygroundScene(BaseScene):
 
     async def _render_effect_page(self) -> None:
         """Render effect selection page."""
-        self.clear_all_tiles(color="black")
+        self.clear_all_tiles(color="black", submit=False)
 
         # Show effects in rows 0-1 (5 effects per row)
         for idx, effect in enumerate(self.EFFECTS[:9]):
@@ -133,7 +133,7 @@ class LEDPlaygroundScene(BaseScene):
 
     async def _render_color_page(self) -> None:
         """Render color selection page."""
-        self.clear_all_tiles(color="black")
+        self.clear_all_tiles(color="black", submit=False)
 
         # Show colors in rows 0-1 (5 colors per row)
         for idx, color_info in enumerate(self.COLORS[:9]):
@@ -198,7 +198,7 @@ class LEDPlaygroundScene(BaseScene):
 
     async def _render_speed_page(self) -> None:
         """Render speed and brightness control page."""
-        self.clear_all_tiles(color="black")
+        self.clear_all_tiles(color="black", submit=False)
 
         # Row 0: Speed label + 4 speed options
         self.set_tile_text(0, 0, "Speed", font_size=14, fg_color="cyan")
@@ -240,7 +240,7 @@ class LEDPlaygroundScene(BaseScene):
 
     async def _render_params_page(self) -> None:
         """Render effect parameters page."""
-        self.clear_all_tiles(color="black")
+        self.clear_all_tiles(color="black", submit=False)
 
         effect = self.EFFECTS[self.selected_effect_idx]
 

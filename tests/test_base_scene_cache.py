@@ -306,28 +306,29 @@ class TestEmptyCacheFileRecovery(unittest.TestCase):
 
 
 class TestNativeCacheRecovery(unittest.TestCase):
-    """_ensure_native_cached must regenerate empty native JPEGs atomically."""
+    """tile_cache.native_key_jpeg must regenerate empty native JPEGs atomically."""
 
     def setUp(self):
+        from stream_toy import tile_cache
+        self.tile_cache = tile_cache
         self.temp_dir = Path(tempfile.mkdtemp())
-
-        # Bypass __init__ (it would talk to USB hardware); the methods under
-        # test only use class attributes and other pure helpers.
-        from stream_toy.device.streamdock293v3_device import StreamDock293V3Device
-        self.device = StreamDock293V3Device.__new__(StreamDock293V3Device)
+        self.original_cache_dir = tile_cache.CACHE_DIR
+        tile_cache.CACHE_DIR = self.temp_dir / "cache"
 
         self.source = self.temp_dir / "tile.png"
         Image.new('RGB', (112, 112), 'green').save(self.source)
 
     def tearDown(self):
+        self.tile_cache.CACHE_DIR = self.original_cache_dir
         if self.temp_dir.exists():
             shutil.rmtree(self.temp_dir)
 
     def test_regenerates_empty_native_cache(self):
-        native_path = self.device._get_cached_native_path(self.source)
+        native_path = self.tile_cache.cache_path_for(self.source, '_native.jpg')
+        native_path.parent.mkdir(parents=True, exist_ok=True)
         native_path.touch()  # empty file, mtime newer than source
 
-        result = self.device._ensure_native_cached(self.source)
+        result = self.tile_cache.native_key_jpeg(self.source)
 
         self.assertEqual(result, native_path)
         self.assertGreater(native_path.stat().st_size, 0)
@@ -335,8 +336,8 @@ class TestNativeCacheRecovery(unittest.TestCase):
             self.assertEqual(img.size, (112, 112))
 
     def test_no_temp_files_left_behind(self):
-        self.device._ensure_native_cached(self.source)
-        leftovers = list(self.temp_dir.glob(".tmp_*"))
+        self.tile_cache.native_key_jpeg(self.source)
+        leftovers = list(self.tile_cache.CACHE_DIR.glob(".tmp_*"))
         self.assertEqual(leftovers, [])
 
 

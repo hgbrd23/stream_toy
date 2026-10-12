@@ -79,6 +79,17 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 _web_device = None
 
+# Number of connected Socket.IO clients, so the web device can skip work
+# nobody would see
+_client_count = 0
+_client_count_lock = threading.Lock()
+
+
+def has_clients() -> bool:
+    """True if at least one browser is connected to the emulator."""
+    with _client_count_lock:
+        return _client_count > 0
+
 
 def set_web_device(device) -> None:
     """
@@ -101,7 +112,11 @@ def index():
 @socketio.on('connect')
 def handle_connect(auth=None):
     """Handle client connection."""
-    logger.info("[INCOMING] Client connected to emulator")
+    global _client_count
+    with _client_count_lock:
+        _client_count += 1
+        count = _client_count
+    logger.info(f"[INCOMING] Client connected to emulator ({count} connected)")
     if _web_device:
         _web_device.on_client_connected()
     else:
@@ -109,9 +124,13 @@ def handle_connect(auth=None):
 
 
 @socketio.on('disconnect')
-def handle_disconnect():
+def handle_disconnect(reason=None):
     """Handle client disconnection."""
-    logger.info("[INCOMING] Client disconnected from emulator")
+    global _client_count
+    with _client_count_lock:
+        _client_count = max(0, _client_count - 1)
+        count = _client_count
+    logger.info(f"[INCOMING] Client disconnected from emulator ({count} connected)")
 
 
 @socketio.on('button_press')
@@ -159,9 +178,7 @@ def emit_tile_update(row: int, col: int, image_base64: str) -> None:
         col: Tile column
         image_base64: Base64-encoded PNG image
     """
-    image_size_bytes = len(image_base64)
-    logger.info(f"[OUTGOING] tile_update: row={row}, col={col}, image_size={image_size_bytes} bytes")
-    logger.debug(f"[OUTGOING] tile_update data: row={row}, col={col}, image_base64={image_base64[:50]}...")
+    logger.debug(f"[OUTGOING] tile_update: row={row}, col={col}, image_size={len(image_base64)} bytes")
 
     socketio.emit('tile_update', {
         'row': row,

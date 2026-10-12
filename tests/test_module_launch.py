@@ -429,6 +429,10 @@ class TestModuleLaunchTileDisplay(unittest.TestCase):
             # Enter scene
             await scene.on_enter()
 
+            # Tiles are flushed to the devices by the display worker thread
+            self.assertTrue(self.runtime.state_manager.wait_idle(timeout=10.0),
+                            "Display worker did not finish flushing tiles")
+
             # Check that tiles were submitted
             final_cache_size = len(self.runtime.device._tile_cache)
 

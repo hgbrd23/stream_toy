@@ -3,16 +3,14 @@ StreamDock 293V3 hardware device implementation.
 
 Wraps the StreamDock SDK to provide the StreamToyDevice interface.
 """
-import subprocess
+import ctypes
 import threading
 import time
-import os
-import hashlib
 from pathlib import Path
-from typing import Optional, Dict, Tuple, Union
-from PIL import Image
+from typing import Dict, Tuple, Union
 import logging
 
+from .. import tile_cache
 from .stream_toy_device import StreamToyDevice
 
 logger = logging.getLogger(__name__)
@@ -64,14 +62,14 @@ class StreamDock293V3Device(StreamToyDevice):
     Hardware implementation for StreamDock 293V3 device.
 
     Wraps the StreamDock SDK and manages:
-    - Tile image updates with queueing
-    - Device refresh synchronization (wait for ACK)
+    - Tile image updates (deduplicated by cache key)
+    - Device refresh synchronization (wait for ACK on background images)
     - Button press event translation
-    - Neopixel LED control
-    """
 
-    # Cache directory for button tiles
-    CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "button_tiles"
+    All USB writes go through _transport_lock: tile flushes run on the display
+    worker thread while set_background_image() may run on another thread, and
+    no tile may be sent while a background refresh is still in progress.
+    """
 
     # Physical button numbering for set_key_image (1-15, top to bottom)
     TILE_TO_BUTTON = {
@@ -100,36 +98,37 @@ class StreamDock293V3Device(StreamToyDevice):
         self._read_thread = None
         self._read_running = False
 
+        # Serialises all USB writes (tiles, background image + its ACK wait)
+        self._transport_lock = threading.Lock()
+
         # Display tile manager for tracking what's currently shown
         self._display_manager = DisplayTileManager()
-
-        # Ensure cache directory exists
-        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     def initialize(self) -> None:
         """Initialize the StreamDock hardware."""
         try:
-            # Set USB device permissions
-            subprocess.run('sudo chown root:$USER /dev/bus/usb/001/00*', check=True, shell=True)
-
+            # USB permissions come from the udev rule installed by install.sh
             from StreamDock.DeviceManager import DeviceManager
             from StreamDock.Devices.StreamDock293V3 import StreamDock293V3
+            from StreamDock.ProductIDs import g_products
 
             logger.info("Initializing StreamDock 293V3 device...")
 
-            # Create device manager
+            # Only probe the 293V3 product ids instead of DeviceManager.enumerate(),
+            # which scans every StreamDock model the SDK knows about
             self.manager = DeviceManager()
-            streamdocks = self.manager.enumerate()
+            streamdocks = []
+            for vid, pid, class_type in g_products:
+                if class_type is not StreamDock293V3:
+                    continue
+                for found in self.manager.transport.enumerate(vid=vid, pid=pid):
+                    streamdocks.append(StreamDock293V3(self.manager.transport, found))
 
             if not streamdocks:
-                raise RuntimeError("No StreamDock devices found")
+                raise RuntimeError("No StreamDock 293V3 devices found")
 
             # Use first device
             self.sdk_device = streamdocks[0]
-
-            # Verify it's a 293V3
-            if not isinstance(self.sdk_device, StreamDock293V3):
-                logger.warning(f"Device is {type(self.sdk_device).__name__}, not StreamDock293V3")
 
             # IMPORTANT: Disable SDK's automatic read thread by replacing _setup_reader
             # We will use our own read thread that calls transport.read_() directly
@@ -185,129 +184,22 @@ class StreamDock293V3Device(StreamToyDevice):
         while self._device_busy:
             if time.time() - start_time > timeout:
                 self._device_busy = False
+                logger.debug(f"ACK wait timed out after {time.time() - start_time:.3f}s")
                 return False
             time.sleep(0.01)  # 10ms poll interval
 
+        logger.debug(f"ACK wait took {time.time() - start_time:.3f}s")
         return True
 
-    def _to_native_format(self, image: Image.Image) -> Image.Image:
+    @staticmethod
+    def _is_ready_ack(result_bytes: bytes, key: int) -> bool:
         """
-        Convert PIL Image to native StreamDock 293V3 format.
+        True if a read report is the device-ready ACK sent after a refresh.
 
-        Follows SDK's _to_native_format logic:
-        - Rotates by 180 degrees
-        - Resizes to 112x112
-        - Converts to RGB
-
-        Args:
-            image: Source PIL Image
-
-        Returns:
-            Processed PIL Image ready for JPEG encoding
+        The ready ACK is ``ACK\\0\\0OK`` followed by zeros. Button events carry
+        the same prefix, so they are told apart by the key in byte 9 (1..15).
         """
-        # Key image format for StreamDock 293V3
-        size = (112, 112)
-        rotation = 180
-
-        # Determine if rotation should expand canvas
-        expand = True
-        if image.size[1] == size[0] and image.size[0] == size[1]:
-            expand = False
-
-        # Rotate first
-        if rotation:
-            image = image.rotate(rotation, expand=expand)
-
-        # Resize if needed
-        if image.size != size:
-            image = image.resize(size, Image.LANCZOS)
-
-        # Convert to RGB (required for JPEG)
-        image = image.convert('RGB')
-
-        return image
-
-    def _get_cached_native_path(self, source_path: Union[str, Path]) -> Path:
-        """
-        Get path for cached native JPEG file.
-
-        Args:
-            source_path: Path to source image file
-
-        Returns:
-            Path to cached native JPEG (with _native.jpg suffix)
-        """
-        source_path = Path(source_path)
-        # Replace extension with _native.jpg
-        cache_path = source_path.parent / f"{source_path.stem}_native.jpg"
-        return cache_path
-
-    def _ensure_native_cached(self, source_path: Union[str, Path]) -> Path:
-        """
-        Ensure a native JPEG cache exists for the source image.
-        Regenerates cache if source is newer than cache.
-
-        Args:
-            source_path: Path to source image file
-
-        Returns:
-            Path to cached native JPEG file
-        """
-        source_path = Path(source_path)
-        cache_path = self._get_cached_native_path(source_path)
-
-        # Check if cache exists and is up-to-date
-        need_regenerate = False
-
-        if not cache_path.exists():
-            logger.debug(f"Cache miss: {cache_path}")
-            need_regenerate = True
-        elif cache_path.stat().st_size == 0:
-            # Interrupted write left a truncated file; the mtime check below
-            # would keep it forever and the device silently drops empty JPEGs.
-            logger.warning(f"Empty cache file, regenerating: {cache_path}")
-            need_regenerate = True
-        else:
-            # Compare modification times
-            source_mtime = source_path.stat().st_mtime
-            cache_mtime = cache_path.stat().st_mtime
-
-            if source_mtime > cache_mtime:
-                logger.debug(f"Cache outdated: {cache_path}")
-                need_regenerate = True
-            else:
-                logger.debug(f"Cache hit: {cache_path}")
-
-        # Regenerate cache if needed
-        if need_regenerate:
-            logger.info(f"Generating native cache: {source_path} -> {cache_path}")
-
-            # Load source image
-            image = Image.open(source_path)
-
-            # Convert to native format
-            native_image = self._to_native_format(image)
-
-            # Save as JPEG with quality=85
-            # Lower quality (85 vs 95) prevents corruption on hardware device
-            # Likely due to smaller file size fitting device buffer limits
-            # Atomic write (tmp + replace) so a crash mid-write cannot leave a
-            # truncated file behind that the freshness check would keep forever.
-            tmp_path = cache_path.parent / f".tmp_{os.getpid()}_{cache_path.name}"
-            try:
-                native_image.save(
-                    tmp_path,
-                    format='JPEG',
-                    quality=85
-                )
-                os.replace(tmp_path, cache_path)
-            except Exception:
-                tmp_path.unlink(missing_ok=True)
-                raise
-
-            logger.info(f"Cache generated: {cache_path}")
-
-        return cache_path
+        return result_bytes[3] == 0 and result_bytes[4] == 0 and not (1 <= key <= 15)
 
     def _custom_read_loop(self) -> None:
         """
@@ -341,15 +233,16 @@ class StreamDock293V3Device(StreamToyDevice):
                 # result is a tuple: (bytes, ack_str, ok_str, key, status)
                 result_bytes, ack_response, ok_response, key, status = result
 
-                # Check for device ready ACK (bytes [3] and [4] both zero means device is ready)
-                # This happens after a refresh() call completes
-                if result_bytes[3] == 0 and result_bytes[4] == 0 and self._device_busy:
+                # Device ready ACK after a refresh() completes. Button events have
+                # the same prefix; treating them as ACK would end a background
+                # refresh wait early and let tiles through mid-refresh.
+                if self._device_busy and self._is_ready_ack(result_bytes, key):
                     logger.debug("Device ACK received, ready for next command")
                     self._device_busy = False
 
                 # Check for button event (key is valid and not 0xFF)
                 if key != 0xFF and 1 <= key <= 15:
-                    logger.info(f"RAW BUTTON EVENT DETECTED: key={key}, status={status}, result_bytes={result_bytes.hex()}")
+                    logger.debug(f"RAW BUTTON EVENT DETECTED: key={key}, status={status}, result_bytes={result_bytes.hex()}")
 
                     # Map the raw key index through KEY_MAPPING to get logical button
                     # The SDK applies KEY_MAPPING to invert rows
@@ -358,21 +251,21 @@ class StreamDock293V3Device(StreamToyDevice):
                     # Translate status (0x01 = pressed, 0x00/0x02 = released)
                     is_pressed = (status == 0x01)
 
-                    logger.info(f"Button event: raw_key={key}, mapped={mapped_key}, pressed={is_pressed}")
+                    logger.debug(f"Button event: raw_key={key}, mapped={mapped_key}, pressed={is_pressed}")
 
                     # Convert mapped key to tile coordinates
                     if mapped_key in self.CALLBACK_BUTTON_TO_TILE:
                         row, col = self.CALLBACK_BUTTON_TO_TILE[mapped_key]
-                        logger.info(f"Button -> tile: key={mapped_key} -> ({row},{col})")
+                        logger.debug(f"Button -> tile: key={mapped_key} -> ({row},{col})")
 
                         # Call registered callback
                         callback = self._key_callback
-                        logger.info(f"Calling callback: {callback}")
+                        logger.debug(f"Calling callback: {callback}")
                         if callback is not None:
                             try:
-                                logger.info(f"Invoking callback with: row={row}, col={col}, is_pressed={is_pressed}")
+                                logger.debug(f"Invoking callback with: row={row}, col={col}, is_pressed={is_pressed}")
                                 callback(row, col, is_pressed)
-                                logger.info(f"Callback executed successfully: ({row},{col}) pressed={is_pressed}")
+                                logger.debug(f"Callback executed successfully: ({row},{col}) pressed={is_pressed}")
                             except Exception as e:
                                 logger.error(f"Callback error: {e}", exc_info=True)
                         else:
@@ -387,38 +280,6 @@ class StreamDock293V3Device(StreamToyDevice):
                 time.sleep(0.1)
 
         logger.info("Custom read loop stopped")
-
-    def _on_sdk_key_event(self, device, key: int, state: int) -> None:
-        """
-        [DEPRECATED] Callback from SDK when a key event occurs.
-        Not used anymore - we use _custom_read_loop instead.
-
-        Args:
-            device: SDK device object (ignored)
-            key: SDK key index (1-15 AFTER KEY_MAPPING is applied by SDK)
-            state: Key state (1 = pressed, 0 = released)
-        """
-        logger.info(f"SDK key event: key={key}, state={state}")
-
-        # Convert SDK callback key index to tile coordinates
-        if key in self.CALLBACK_BUTTON_TO_TILE:
-            row, col = self.CALLBACK_BUTTON_TO_TILE[key]
-            is_pressed = (state == 1)
-
-            logger.info(f"Button event: key={key} -> ({row},{col}), pressed={is_pressed}")
-
-            # Call registered callback (may be None during early initialization)
-            callback = self._key_callback
-            if callback is not None:
-                try:
-                    callback(row, col, is_pressed)
-                    logger.info("Callback executed successfully")
-                except Exception as e:
-                    logger.error(f"Callback error: {e}", exc_info=True)
-            else:
-                logger.debug(f"Event received but no callback registered yet (normal during init)")
-        else:
-            logger.warning(f"Unknown button index: {key}")
 
     def close(self) -> None:
         """Close device and cleanup."""
@@ -453,8 +314,9 @@ class StreamDock293V3Device(StreamToyDevice):
         """
         Set full screen background image (800x480).
 
-        This method sets the background image and optionally waits for ACK from the device.
-        Full screen images take 500ms to 3+ seconds to update and require ACK waiting.
+        Full screen images take 500ms to 3+ seconds to update and require ACK
+        waiting. The transport lock is held through the ACK wait so no tiles
+        are sent while the device is still refreshing.
 
         Args:
             image_path: Path to background image file
@@ -474,160 +336,103 @@ class StreamDock293V3Device(StreamToyDevice):
             return False
 
         try:
-            logger.info(f"Setting background image: {image_path}")
+            # Cached rotated JPEG; avoids the SDK's per-call decode/encode/temp file
+            native_path = tile_cache.native_background_jpeg(image_path)
+        except Exception as e:
+            logger.error(f"Error converting background image: {e}", exc_info=True)
+            return False
 
-            # Set device busy flag before sending image
-            if wait_for_ack:
-                self._device_busy = True
+        with self._transport_lock:
+            try:
+                logger.info(f"Setting background image: {image_path}")
 
-            # Call SDK method to set background image
-            result = self.sdk_device.set_touchscreen_image(str(image_path))
+                # Set device busy flag before sending image
+                if wait_for_ack:
+                    self._device_busy = True
 
-            if result != 1:
-                logger.warning(f"Failed to set background image: result={result}")
+                c_path = ctypes.c_char_p(str(native_path).encode('utf-8'))
+                result = self.sdk_device.transport.setBackgroundImgDualDevice(c_path)
+
+                if result != 1:
+                    logger.warning(f"Failed to set background image: result={result}")
+                    self._device_busy = False
+                    return False
+
+                # Trigger refresh
+                self.sdk_device.refresh()
+                logger.debug("Background image set, refresh triggered")
+
+                # The background overwrites the key areas: every tile has to
+                # be sent again even if its cache key was displayed before
+                self._display_manager.clear()
+
+                # Wait for ACK if requested
+                if wait_for_ack:
+                    logger.info(f"Waiting for device ACK (timeout: {timeout}s)...")
+                    start_time = time.time()
+
+                    if not self._wait_for_ack(timeout):
+                        logger.error(f"Timeout waiting for device ACK after {timeout}s")
+                        return False
+
+                    elapsed = time.time() - start_time
+                    logger.info(f"Device ACK received after {elapsed:.2f}s")
+
+                return True
+
+            except Exception as e:
+                logger.error(f"Error setting background image: {e}", exc_info=True)
                 self._device_busy = False
                 return False
 
-            # Trigger refresh
-            self.sdk_device.refresh()
-            logger.debug("Background image set, refresh triggered")
-
-            # Wait for ACK if requested
-            if wait_for_ack:
-                logger.info(f"Waiting for device ACK (timeout: {timeout}s)...")
-                start_time = time.time()
-
-                if not self._wait_for_ack(timeout):
-                    logger.error(f"Timeout waiting for device ACK after {timeout}s")
-                    return False
-
-                elapsed = time.time() - start_time
-                logger.info(f"Device ACK received after {elapsed:.2f}s")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Error setting background image: {e}", exc_info=True)
-            self._device_busy = False
-            return False
-
-    def set_tile(
-        self,
-        row: int,
-        col: int,
-        image_path: Union[str, Path],
-        cache_key: Optional[str] = None
-    ) -> None:
+    def flush_tiles(self, tiles: Dict[Tuple[int, int], Tuple[Path, str]]) -> None:
         """
-        Queue a tile image update with optional caching.
+        Send changed tiles to the device and refresh once.
 
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            image_path: Path to image file (str/Path)
-            cache_key: Optional cache key for tracking
-
-        Raises:
-            ValueError: If row/col out of range
-            FileNotFoundError: If image_path doesn't exist
+        Tiles whose cache key is already displayed are skipped; tiles without
+        a cache key are always sent. No ACK wait: key tiles are handled
+        asynchronously by the device (see CLAUDE.md).
         """
-        self.validate_tile_coords(row, col)
-
-        # Convert to Path
-        image_path = Path(image_path)
-
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image file not found: {image_path}")
-
-        # Queue the image path with cache_key
-        self._tile_queue[(row, col)] = (image_path, cache_key or "")
-
-    def submit_tiles(self) -> None:
-        """Flush queued tile updates to device hardware."""
-        if not self._tile_queue:
-            logger.debug("No tiles to submit")
-            return
-
         if not self.sdk_device:
             raise RuntimeError("Device not initialized")
 
-        # Filter queue to only include changed tiles using DisplayTileManager
-        changed_tiles = {}
-        for (row, col), (image_path, cache_key) in self._tile_queue.items():
-            # Check if this tile needs updating using cache key comparison
-            if cache_key:
-                if not self._display_manager.is_displayed(row, col, cache_key):
-                    changed_tiles[(row, col)] = (image_path, cache_key)
-            else:
-                # No cache key - always update
-                changed_tiles[(row, col)] = (image_path, cache_key)
+        # Filter to changed tiles and resolve their native JPEGs before taking
+        # the transport lock; generating a cache file can take a while.
+        changed_tiles = []
+        for (row, col), (image_path, cache_key) in tiles.items():
+            if cache_key and self._display_manager.is_displayed(row, col, cache_key):
+                continue
+
+            button_idx = self.TILE_TO_BUTTON.get((row, col))
+            if button_idx is None:
+                logger.error(f"Failed to map tile ({row},{col}) to button index")
+                continue
+
+            try:
+                native_path = tile_cache.native_key_jpeg(image_path)
+            except Exception as e:
+                logger.error(f"Cannot convert tile ({row},{col}) {image_path}: {e}")
+                continue
+            changed_tiles.append((row, col, button_idx, native_path, cache_key))
 
         if not changed_tiles:
             logger.debug("No tile changes detected - skipping submit")
-            self._tile_queue.clear()
             return
 
-        logger.debug(f"Submitting {len(changed_tiles)} tile updates (skipped {len(self._tile_queue) - len(changed_tiles)} unchanged)")
+        logger.debug(f"Submitting {len(changed_tiles)} tile updates (skipped {len(tiles) - len(changed_tiles)})")
 
-        try:
-            # Import ctypes for direct transport call
-            import ctypes
-
-            tile_count = 0
-            for (row, col), (image_path, cache_key) in changed_tiles.items():
-                # Convert tile coordinates to physical button index (1-15)
-                button_idx = self.TILE_TO_BUTTON.get((row, col))
-
-                if button_idx is None:
-                    logger.error(f"Failed to map tile ({row},{col}) to button index")
-                    continue
-
-                # Ensure native JPEG exists (creates cache if needed)
-                native_path = self._ensure_native_cached(image_path)
-
-                if not native_path.exists():
-                    logger.error(f"Native cache file not found: {native_path}")
-                    continue
-
-                # Send native JPEG to device using SDK's transport method
-                path_bytes = str(native_path).encode('utf-8')
-                c_path = ctypes.c_char_p(path_bytes)
-
-                # Get SDK's button key (maps physical button 1-15 to device protocol)
+        with self._transport_lock:
+            for row, col, button_idx, native_path, cache_key in changed_tiles:
+                c_path = ctypes.c_char_p(str(native_path).encode('utf-8'))
                 sdk_key = self.sdk_device.key(button_idx)
-
-                # Call transport's setKeyImgDualDevice directly
                 result = self.sdk_device.transport.setKeyImgDualDevice(c_path, sdk_key)
 
                 if result != 1:
                     logger.warning(f"Failed to set key image for button {button_idx}: result={result}")
                 else:
                     logger.debug(f"Set tile ({row},{col}) -> button {button_idx}")
-                    # Update display manager with cache key
                     if cache_key:
                         self._display_manager.set_displayed(row, col, cache_key)
 
-            # Clear queue
-            num_tiles = len(self._tile_queue)
-            self._tile_queue.clear()
-
             # Refresh device once after all tiles
             self.sdk_device.refresh()
-            logger.debug(f"Submitted {num_tiles} tile update(s)")
-
-        except Exception as e:
-            logger.error(f"Error in submit_tiles: {e}", exc_info=True)
-            raise
-
-    def _on_state_tile_update(self, row: int, col: int, image_path: Union[str, Path], cache_key: str) -> None:
-        """
-        Callback from central state manager when a tile is updated.
-
-        Args:
-            row: Tile row (0-2)
-            col: Tile column (0-4)
-            image_path: Path to image file
-            cache_key: Cache key for tracking
-        """
-        # Queue the tile update locally
-        self.set_tile(row, col, image_path, cache_key)

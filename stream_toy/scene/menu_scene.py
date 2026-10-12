@@ -71,8 +71,9 @@ class MenuScene(BaseScene):
         # Build menu structure
         self.items = self.build_menu()
 
-        # Clear all tiles first
-        self.clear_all_tiles()
+        # Queue black for every slot; the items below overwrite their slots in
+        # the same batch, so unused slots are cleared with a single submit.
+        self.clear_all_tiles(submit=False)
 
         # Render each menu item
         for item in self.items:

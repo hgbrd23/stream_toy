@@ -37,6 +37,16 @@ class DisplayStateManager:
         # Thread lock for state updates
         self._lock = threading.Lock()
 
+        # Display worker: flushes device queues off the asyncio loop so USB
+        # and image I/O never block input handling or audio. submit() only
+        # signals; several submits before the worker wakes up collapse into
+        # one flush (devices drain their whole queue at once).
+        self._submit_requested = threading.Event()
+        self._idle = threading.Event()
+        self._idle.set()
+        self._worker_running = False
+        self._worker: Optional[threading.Thread] = None
+
         # Central LED manager (single instance shared by all devices)
         self.led_manager: Optional[LEDManager] = None
 
@@ -128,13 +138,45 @@ class DisplayStateManager:
         """
         Trigger all viewers to flush their pending updates.
 
-        This is called after a batch of set_tile operations to tell
-        devices to actually send updates to hardware/browser.
+        Called after a batch of set_tile operations. Returns immediately; the
+        display worker thread performs the flush. Use wait_idle() when the
+        caller has to know the tiles reached the devices (tests, shutdown).
         """
+        self._idle.clear()
+        self._submit_requested.set()
+        if not self._worker_running:
+            self._start_worker()
+
+    def wait_idle(self, timeout: Optional[float] = None) -> bool:
+        """Block until all requested flushes are done. Returns False on timeout."""
+        return self._idle.wait(timeout)
+
+    def _start_worker(self) -> None:
+        with self._lock:
+            if self._worker_running:
+                return
+            self._worker_running = True
+            self._worker = threading.Thread(target=self._worker_loop, name="display-worker", daemon=True)
+            self._worker.start()
+        logger.info("Display worker thread started")
+
+    def _worker_loop(self) -> None:
+        while self._worker_running:
+            if not self._submit_requested.wait(timeout=0.5):
+                continue
+            if not self._worker_running:
+                break  # woken by shutdown()
+            self._submit_requested.clear()
+            self._flush_all()
+            # Requests that arrived during the flush keep the event set and
+            # are handled by the next iteration before we report idle.
+            if not self._submit_requested.is_set():
+                self._idle.set()
+
+    def _flush_all(self) -> None:
         with self._lock:
             devices = self._viewer_devices.copy()
 
-        # Call submit_tiles on all viewer devices
         for device in devices:
             try:
                 device.submit_tiles()
@@ -142,6 +184,17 @@ class DisplayStateManager:
                 logger.error(f"Error calling submit_tiles on viewer {type(device).__name__}: {e}", exc_info=True)
 
         logger.debug(f"Submitted tile updates to {len(devices)} viewer(s)")
+
+    def shutdown(self) -> None:
+        """Flush pending tiles and stop the display worker and LED manager."""
+        if self._worker_running:
+            self.wait_idle(timeout=5.0)
+            self._worker_running = False
+            self._submit_requested.set()  # wake the worker so it can exit
+            if self._worker:
+                self._worker.join(timeout=2.0)
+            logger.info("Display worker thread stopped")
+        self.stop_led_manager()
 
     def get_tile_state(self, row: int, col: int) -> Optional[Tuple[Union[str, Path], str]]:
         """

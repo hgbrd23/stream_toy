@@ -669,20 +669,23 @@ class BaseScene(ABC):
         cache_path = self._cache_image(cache_key, img)
         self.state_manager.set_tile(row, col, cache_path, cache_key=cache_key)
 
-    def clear_all_tiles(self, color: str = "black") -> None:
+    def clear_all_tiles(self, color: str = "black", submit: bool = True) -> None:
         """
         Clear all tiles to a solid color.
 
         Args:
             color: Color name or hex
+            submit: Flush immediately. Pass False when the caller draws the
+                real content right afterwards and submits itself: the devices
+                then send each tile once instead of black first and the
+                content second (half the USB traffic and no black flash).
         """
         for row in range(self.device.TILE_ROWS):
             for col in range(self.device.TILE_COLS):
                 self.clear_tile(row, col, color)
 
-        # Force submit to ensure tiles are actually cleared on the device
-        # This is important when switching scenes to prevent old content from persisting
-        self.submit_tiles()
+        if submit:
+            self.submit_tiles()
 
     def submit_tiles(self) -> None:
         """Submit all queued tile updates to all devices via central state."""

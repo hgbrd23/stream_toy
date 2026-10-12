@@ -391,6 +391,14 @@ setup_venv() {
         log_warning "spotdl installation failed - Spotify downloads will not work"
     fi
 
+    # rsync excludes __pycache__, so without this the first boot after every
+    # update compiles all sources on the Pi (several seconds)
+    log_info "Precompiling Python sources..."
+    "$VENV_DIR/bin/python3" -m compileall -q \
+        "${INSTALL_DIR}/stream_toy" "${INSTALL_DIR}/stream_toy_apps" \
+        "${INSTALL_DIR}/main.py" \
+        "${INSTALL_DIR}/StreamDock-Device-SDK/Python-Linux-SDK/src" > /dev/null 2>&1 || true
+
     log_success "Python environment configured"
 }
 
@@ -442,9 +450,9 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Resource limits
+# Resource limits. No CPUQuota: the Pi Zero 2 W has four cores and a quota
+# capped the whole service (USB writes, audio, web server) to one core.
 MemoryMax=512M
-CPUQuota=90%
 
 [Install]
 WantedBy=multi-user.target

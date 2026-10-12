@@ -123,3 +123,28 @@ Keep: ACK waits for background images, quality 85 for every native JPEG.
    SDK's `read_()` prints every report (LibUSBHIDAPI.py:169). Demote to DEBUG.
 6. A constant 10 Hz web LED push (web_device.py:123-136) runs with no browser
    connected.
+
+## Implemented (2026-10-12)
+
+* Startup: hardware device opens before LED init; `sudo chown` removed; only
+  the 293V3 product ids are probed; splash and black background use cached
+  native JPEGs sent via `setBackgroundImgDualDevice` (no temp file); yt-dlp
+  upgrade delayed by 3 minutes and run under `nice`; `CPUQuota` removed from
+  the service unit; sources precompiled by install.sh; icon caches warmed
+  during the splash; the 0.2 s launcher sleep removed.
+* Drawing: `DisplayStateManager.submit()` only signals a display worker
+  thread, which drains the device queues (several submits collapse into
+  one flush, USB and image I/O never block the asyncio loop). Devices
+  implement `flush_tiles(batch)`. Native JPEGs and browser PNGs live in
+  `data/cache/button_tiles` (`stream_toy/tile_cache.py`), survive deploys
+  and are generated once per source. The web device deduplicates by cache
+  key, sends cached PNG bytes without re-encoding, skips emits and the LED
+  push when no browser is connected, and no longer sleeps. Menus and the
+  LED playground draw black and content in one batch.
+* Bugs: button events are no longer taken as the device ACK; all USB writes
+  are serialised through a transport lock held through the background ACK
+  wait; the tile dedup state is reset after a background image; per-event
+  INFO logs demoted to DEBUG.
+* Still open: the 1 s ACK wait at init (needs a journal measurement), the
+  stale-ACK race for background images, text tiles still go through the
+  PNG cache before the native JPEG is produced.

@@ -6,7 +6,6 @@ Displays all available modules and allows launching them.
 
 from pathlib import Path
 from typing import List, TYPE_CHECKING
-import asyncio
 import logging
 
 from .menu_scene import MenuScene, MenuItem, ButtonAction
@@ -50,7 +49,6 @@ class ModuleLaunchScene(MenuScene):
                 # Set dim white
                 dim_white = (10, 10, 10)
                 self.state_manager.led_manager.set_all(dim_white)
-                await asyncio.sleep(0.2)  # Brief pause to ensure it's set
         except Exception as e:
             logger.debug(f"Failed to reset LEDs: {e}")
 

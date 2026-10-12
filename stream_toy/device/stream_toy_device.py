@@ -6,6 +6,7 @@ Provides a unified interface for physical and emulated devices.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+import threading
 from typing import Callable, Optional, Tuple, Dict, Union
 import logging
 
@@ -42,7 +43,10 @@ class StreamToyDevice(ABC):
     def __init__(self):
         """Initialize the device."""
         self._key_callback: Optional[Callable[[int, int, bool], None]] = None
-        self._tile_queue: Dict[Tuple[int, int], Tuple[Union[str, Path], str]] = {}  # (path, cache_key)
+        # Pending tile updates: (row, col) -> (path, cache_key). Filled from the
+        # scene thread, drained by the display worker thread.
+        self._tile_queue: Dict[Tuple[int, int], Tuple[Path, str]] = {}
+        self._queue_lock = threading.Lock()
         self._initialized = False
 
         # Sound manager - shared across all devices
@@ -91,17 +95,42 @@ class StreamToyDevice(ABC):
         """
         self.state_manager = state_manager
 
-    @abstractmethod
     def submit_tiles(self) -> None:
         """
         Flush queued tile updates to the actual device hardware/browser.
 
-        This is called by the central state manager after tile updates.
-        Subclasses should implement this to send queued tiles to the device.
+        Called by the central state manager's display worker after a batch of
+        set_tile() calls. Drains the queue atomically and hands the batch to
+        flush_tiles(); updates queued while flushing are picked up by the next
+        submit.
+        """
+        tiles = self.pop_queued_tiles()
+        if not tiles:
+            logger.debug("No tiles to submit")
+            return
+        self.flush_tiles(tiles)
+
+    def pop_queued_tiles(self) -> Dict[Tuple[int, int], Tuple[Path, str]]:
+        """Remove and return all queued tile updates."""
+        with self._queue_lock:
+            tiles = self._tile_queue
+            self._tile_queue = {}
+        return tiles
+
+    @abstractmethod
+    def flush_tiles(self, tiles: Dict[Tuple[int, int], Tuple[Path, str]]) -> None:
+        """
+        Send a batch of tile updates to the device hardware/browser.
+
+        Runs on the display worker thread, never on the asyncio loop, so it
+        may block on USB or image I/O.
+
+        Args:
+            tiles: (row, col) -> (image_path, cache_key); cache_key is "" when
+                the caller did not provide one (always redraw in that case)
         """
         pass
 
-    @abstractmethod
     def set_tile(
         self,
         row: int,
@@ -120,8 +149,20 @@ class StreamToyDevice(ABC):
 
         Raises:
             ValueError: If row/col out of range
+            FileNotFoundError: If image_path doesn't exist
         """
-        pass
+        self.validate_tile_coords(row, col)
+
+        image_path = Path(image_path)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+
+        with self._queue_lock:
+            self._tile_queue[(row, col)] = (image_path, cache_key or "")
+
+    def _on_state_tile_update(self, row: int, col: int, image_path: Union[str, Path], cache_key: str) -> None:
+        """Callback from the central state manager: queue the tile update locally."""
+        self.set_tile(row, col, image_path, cache_key)
 
     def submit(self) -> None:
         """
@@ -144,13 +185,8 @@ class StreamToyDevice(ABC):
                      col: int (0-4)
                      is_pressed: bool (True on press, False on release)
         """
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(f"!!! REGISTERING KEY CALLBACK for device {type(self).__name__}: {callback}")
-        logger.warning(f"!!! Callback function: {callback.__module__}.{callback.__name__ if hasattr(callback, '__name__') else callback}")
         self._key_callback = callback
-        logger.warning(f"!!! Key callback registered successfully, _key_callback is now: {self._key_callback}")
-        logger.warning(f"!!! Callback is callable: {callable(self._key_callback)}")
+        logger.debug(f"Key callback registered for {type(self).__name__}: {callback}")
 
     def set_background_led_animation(self, animation) -> None:
         """

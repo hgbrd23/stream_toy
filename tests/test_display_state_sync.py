@@ -51,6 +51,9 @@ class TestDisplayStateSync(unittest.TestCase):
             device=self.device2
         )
 
+    def tearDown(self):
+        self.state_manager.shutdown()
+
     def test_tile_update_propagates_to_all_viewers(self):
         """Test that a tile update is sent to all registered viewers."""
         # Create a temporary test image
@@ -79,12 +82,41 @@ class TestDisplayStateSync(unittest.TestCase):
         self.assertEqual(self.device1.submits, 0)
         self.assertEqual(self.device2.submits, 0)
 
-        # Call submit on state manager
+        # Call submit on state manager (flushed by the display worker thread)
         self.state_manager.submit()
+        self.assertTrue(self.state_manager.wait_idle(timeout=5.0))
 
         # Verify both devices received submit call
         self.assertEqual(self.device1.submits, 1)
         self.assertEqual(self.device2.submits, 1)
+
+    def test_submit_does_not_block_caller(self):
+        """submit() must return before the devices finished flushing."""
+        import threading
+        release = threading.Event()
+        started = threading.Event()
+
+        def slow_submit():
+            started.set()
+            release.wait(timeout=5.0)
+            self.device1.submits += 1
+
+        self.device1.submit_tiles = slow_submit
+
+        self.state_manager.submit()
+        self.assertTrue(started.wait(timeout=5.0))
+        # Caller is back here while the device is still flushing
+        self.assertEqual(self.device1.submits, 0)
+        release.set()
+        self.assertTrue(self.state_manager.wait_idle(timeout=5.0))
+        self.assertEqual(self.device1.submits, 1)
+
+    def test_shutdown_stops_worker(self):
+        """shutdown() flushes pending work and stops the worker thread."""
+        self.state_manager.submit()
+        self.state_manager.shutdown()
+        self.assertEqual(self.device1.submits, 1)
+        self.assertFalse(self.state_manager._worker.is_alive())
 
     def test_multiple_tile_updates_stay_synced(self):
         """Test that multiple tile updates keep all viewers in sync."""
