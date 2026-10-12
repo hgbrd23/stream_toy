@@ -145,6 +145,29 @@ Keep: ACK waits for background images, quality 85 for every native JPEG.
   are serialised through a transport lock held through the background ACK
   wait; the tile dedup state is reset after a background image; per-event
   INFO logs demoted to DEBUG.
-* Still open: the 1 s ACK wait at init (needs a journal measurement), the
+* Still open: the 1 s ACK wait at init (see measurement below), the
   stale-ACK race for background images, text tiles still go through the
   PNG cache before the native JPEG is produced.
+
+## Measured on the device (2026-10-12, first start after deploy, cold cache)
+
+| Step                                   | Time                        |
+|----------------------------------------|-----------------------------|
+| Service start to device open           | 1.8 s (Python + imports)    |
+| Fixed wait after device init           | 1.0 s (no ACK involved)     |
+| Hardware device initialised            | 1.19 s total                |
+| Splash JPEG generated + sent           | 0.4 s                       |
+| Splash background ACK                  | 1.30 s                      |
+| Sound + web + modules in background    | done 3.0 s after splash     |
+| Tile cache warmup (46 files)           | 13.9 s, finished at +21 s   |
+| Splash hold (by design, since b917a0b) | 120 s unless a key is held  |
+| Black background ACK                   | 0.25 s                      |
+| Clear to menu scene entered            | 0.5 s                       |
+
+The splash hold dominates the perceived startup: nothing else on the path
+takes longer than the cache warmup, which runs hidden behind the splash and
+only happens on the first start after a deploy. The 1 s wait after device
+init is a plain `sleep`, not an ACK wait, so it can be shortened or replaced
+by the first real ACK without risk. The splash ACK (1.3 s) and the black
+background ACK (0.25 s) show that the device acknowledges a background
+image in well under the 10 s timeout.
