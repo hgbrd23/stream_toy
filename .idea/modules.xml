@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/StreamDockKeyboard.iml" filepath="$PROJECT_DIR$/.idea/StreamDockKeyboard.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/streamdock.iml" filepath="$PROJECT_DIR$/.idea/streamdock.iml" />
     </modules>
   </component>
 </project>
